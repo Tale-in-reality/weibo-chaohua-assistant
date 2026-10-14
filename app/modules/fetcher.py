@@ -5,11 +5,15 @@
 - 翻页用 `page=1,2,3...`（`cardlistInfo` 为空、没有 since_id）。
 - 抓取窗口 = **距上次成功抓取的时间**（至少一个抓取间隔），把窗口内的帖子全抓下来。
 - **水贴过滤**：只发几个字/表情、没有实义内容的帖子直接忽略，不入库。
-- 有**页数上限**（`weibo_max_pages`，默认 20）——热门超话一小时的帖子可能上千页，硬抓必封号。
+- **不设页数上限**（与「文案库导入」一致）：一直翻到窗口起点或时间线到底；每翻
+  `BATCH_PAGES` 页按 `weibo_fetch_cooldown` 休息一下（0=不额外休息），随时可停。
+  只留 `SAFETY_MAX_PAGES` 作内部死循环兜底，不给用户当旋钮。
+  风控靠「每请求 1~2.5 秒 pacing + 批间休息 + 抓取间隔抖动」控节奏，不靠砍页数。
 
 ⚠️ 风控：用小号、低频、遇 418/432 软失败不重试。
 """
 import html
+import random
 import re
 import threading
 import time
@@ -74,7 +78,8 @@ JOB = {
     "running": False, "done": False, "ok": None,
     "phase": "",              # fetch | summarize | done
     "trigger": "",            # auto（定时/开机补抓） | manual（点按钮）
-    "page": 1, "max_pages": 0, "fetched": 0, "added": 0, "noise": 0, "real": 0,
+    "page": 1, "fetched": 0, "added": 0, "noise": 0, "real": 0,
+    "batch": 0, "cooldown": 0,        # 第几批 / 本批休息剩余秒数
     "window_min": 0, "start_date": "", "reached_date": "", "cutoff_date": "",
     "progress": 0.0, "message": "", "error": "", "started": 0.0,
 }
@@ -127,6 +132,30 @@ def _progress(start_pos, reached, cutoff) -> float:
     if total <= 0:
         return 1.0
     return max(0.0, min(1.0, (start_pos - reached).total_seconds() / total))
+
+
+# 抓取**不设页数上限**（和「文案库导入」一致）：一直翻到窗口起点或时间线到底。
+# 这个常量只是防跑飞的死循环保险，不给用户当旋钮 —— 正常靠「翻到窗口起点」结束。
+SAFETY_MAX_PAGES = 2000
+BATCH_PAGES = 20            # 每翻多少页歇一下（与文案库导入一致）
+
+
+def _cooldown_setting() -> int:
+    """每 BATCH_PAGES 页休息几秒。允许 0（=不额外休息，只靠 pacing 控节奏）。"""
+    try:
+        return max(0, int(db.get_setting("weibo_fetch_cooldown", "10") or 10))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _sleep_or_stop(seconds: float) -> bool:
+    """可被「停止抓取」打断的睡眠。返回 True 表示期间收到了停止请求。"""
+    end = time.monotonic() + max(0.0, seconds)
+    while time.monotonic() < end:
+        if _STOP.is_set():
+            return True
+        time.sleep(0.3)
+    return _STOP.is_set()
 
 
 def _sorted_cid() -> str:
@@ -362,11 +391,15 @@ def _window_minutes() -> int:
 
 # ---------- 主入口 ----------
 
-def fetch_new(cookie: str = "", containerid: str = "", max_pages=None,
+def fetch_new(cookie: str = "", containerid: str = "",
               trigger: str = "manual", keep_open: bool = False) -> dict:
     """抓「最新」里、窗口内的帖子入库。返回 dict，**不抛异常**。
 
-    成功：{ok, fetched, added, skipped, noise, window_min, truncated, message}
+    **不设页数上限**（与「文案库导入」同一逻辑）：一直翻到窗口起点（碰到早于窗口的
+    帖子）或时间线到底为止；每翻 BATCH_PAGES 页按设置休息一下，休息也能被「停止」打断。
+    只留内部兜底 SAFETY_MAX_PAGES 防死循环，不给用户当旋钮。
+
+    成功：{ok, fetched, added, skipped, noise, pages, stopped, window_min, message}
     失败：{ok:False, error, ...}   （软失败，绝不重试）
 
     trigger: manual（点按钮）/ auto（定时或开机补抓）——只用于进度显示。
@@ -385,33 +418,33 @@ def fetch_new(cookie: str = "", containerid: str = "", max_pages=None,
         JOB.update(running=True, done=False, ok=None, phase="fetch", trigger=trigger,
                    page=1, fetched=0, added=0, noise=0, real=0, progress=0.0,
                    message="开始抓取…", error="", started=time.time(),
-                   start_date="", reached_date="", cutoff_date="")
+                   start_date="", reached_date="", cutoff_date="", batch=0, cooldown=0)
     _STOP.clear()
 
-    if max_pages is None:
-        max_pages = _int_setting("weibo_max_pages", 20)
     window_min = _window_minutes()
     now = datetime.now()
     cutoff = now - timedelta(minutes=window_min)
-    _set(max_pages=max_pages, window_min=window_min,
-         start_date=_pdate(now), cutoff_date=_pdate(cutoff),
-         message=f"窗口 {window_min} 分钟：从最新往前翻…")
+    cooldown = _cooldown_setting()
+    _set(window_min=window_min, start_date=_pdate(now), cutoff_date=_pdate(cutoff),
+         message=f"窗口 {window_min} 分钟：从最新往前翻，直到翻到窗口起点…")
 
     max_fulltext = _int_setting("weibo_max_fulltext", 40)   # 每次最多取几篇长文全文
     fetched = added = noise = real_seen = longtxt = 0
-    stopped = "window"          # window | pages | empty | stopped
-    page = 1
+    stopped = None              # window | empty | stopped | cap
+    page = 1                    # 正在翻的页码
+    in_batch = 0
+    batches = 0
     start_pos = reached = None  # 窗口内「最新那条」与「当前翻到最旧那条」的时间
     try:
         try:
-            while page <= max_pages:
+            while page <= SAFETY_MAX_PAGES and stopped is None:
                 if _STOP.is_set():
                     stopped = "stopped"
                     break
                 data = _get_index(page)
                 items = _parse_cards(data)
                 if not items:
-                    stopped = "empty"
+                    stopped = "empty"         # 时间线到底
                     break
                 fetched += len(items)
 
@@ -443,33 +476,60 @@ def fetch_new(cookie: str = "", containerid: str = "", max_pages=None,
                      progress=_progress(start_pos, reached, cutoff),
                      message=(f"翻到第 {page} 页 · 已到 {_pdate(reached) or '—'}"
                               f"（目标 {_pdate(cutoff)}）· 新增 {added}"))
+                page += 1
+                in_batch += 1
 
                 if reached_old:
-                    stopped = "window"
+                    stopped = "window"        # 已够到窗口起点 → 抓完
                     break
-                page += 1                          # 页间节奏由 pacing 统一控制
-            else:
-                stopped = "pages"                 # 到页数上限还没够到窗口起点
+
+                if in_batch >= BATCH_PAGES:   # 该歇一下了（与文案库导入一致）
+                    in_batch = 0
+                    batches += 1
+                    wait = int(cooldown + random.uniform(0, cooldown * 0.6)) if cooldown > 0 else 0
+                    if wait > 0:
+                        _set(batch=batches, cooldown=wait,
+                             message=(f"已翻 {page - 1} 页到 {_pdate(reached) or '—'}，"
+                                      f"休息 {wait} 秒后继续…"))
+                        hit = _sleep_or_stop(wait)      # 休息也能被「停止」打断
+                        _set(cooldown=0)
+                        if hit:
+                            stopped = "stopped"
+                            break
+                    else:
+                        _set(batch=batches)
+            if stopped is None:
+                stopped = "cap"               # 撞到内部兜底（正常不该发生）
         except FetchError as e:
             if added:
                 db.log_run("fetch", "partial", f"部分成功（已入 {added} 帖）后失败：{e}")
             _set(ok=False, error=str(e), message=f"失败：{e}")
             return {"ok": False, "error": str(e), "fetched": fetched, "added": added}
 
+        pages_done = page - 1
         skipped = max(fetched - added - noise, 0)
-        msg = (f"窗口 {window_min} 分钟：翻 {page} 页取 {fetched} 条 → 真帖 {real_seen}，"
-               f"新增 {added}（去重跳过 {skipped}），忽略水贴 {noise}"
-               + (f"，展开长文 {longtxt} 篇" if longtxt else ""))
-        if stopped == "pages":
-            msg += f"（⚠ 到页数上限 {max_pages}，窗口内可能还有未取到的帖）"
-        elif stopped == "stopped":
-            msg += "（已手动停止，已入库的保留）"
-        db.log_run("fetch", "ok", msg)
-        _set(ok=True, page=page, fetched=fetched, added=added, noise=noise,
-             real=real_seen, progress=1.0, message=msg)
+        end = f"已到 {_pdate(reached)}" if reached else "尚未翻页"
+        if stopped == "stopped":
+            msg = (f"已手动停止（{end}）：翻 {pages_done} 页，新增 {added} 条。"
+                   f"再点「抓取」会从最新重翻，重复的自动跳过。")
+        elif stopped == "cap":
+            msg = (f"翻了 {pages_done} 页到内部兜底上限就停了，窗口内可能还有没抓到的。"
+                   f"新增 {added} 条。")
+        else:
+            why = "时间线到底" if stopped == "empty" else "已到窗口起点"
+            msg = (f"翻 {pages_done} 页扫完（{why}，{end}）：窗口 {window_min} 分钟取 "
+                   f"{fetched} 条 → 真帖 {real_seen}，新增 {added}（去重跳过 {skipped}），"
+                   f"忽略水贴 {noise}"
+                   + (f"，展开长文 {longtxt} 篇" if longtxt else ""))
+        db.log_run("fetch", "partial" if stopped == "cap" else "ok", msg)
+        kw = dict(ok=True, page=pages_done, fetched=fetched, added=added, noise=noise,
+                  real=real_seen, batches=batches, message=msg)
+        if stopped in ("window", "empty"):
+            kw["progress"] = 1.0              # 跑完了，进度条拉满
+        _set(**kw)
         return {"ok": True, "fetched": fetched, "added": added, "skipped": skipped,
-                "noise": noise, "real": real_seen, "pages": page, "stopped": stopped,
-                "window_min": window_min, "message": msg}
+                "noise": noise, "real": real_seen, "pages": pages_done, "stopped": stopped,
+                "window_min": window_min, "batches": batches, "message": msg}
     finally:
         # keep_open=True：调用方（run_fetch）后面还要接「总结」阶段，别在这里收尾，
         # 否则前端会先看到 done 而停掉轮询，错过总结进度。

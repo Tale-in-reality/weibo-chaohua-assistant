@@ -611,10 +611,13 @@
             <input type="number" id="s-fetch-interval" min="1">
           </div>
           <div>
-            <label>最多抓几页（安全上限）</label>
-            <input type="number" id="s-fetch-pages" min="1" max="100">
+            <label>每 20 页休息（<u>秒</u>）</label>
+            <input type="number" id="s-fetch-cooldown" min="0" max="600">
           </div>
         </div>
+        <div class="desc">抓取<b>不设页数上限</b>：一直往前翻，直到翻过「上次抓取到现在」的窗口起点为止
+          （和「文案库导入」一个逻辑）。每翻 20 页按上面的秒数歇一下 —— 填 <b>0</b> ＝ 不额外休息，
+          只靠每请求 1~2.5 秒的间隔控节奏。抓的过程中可在「推送」页点「停止抓取」。</div>
         <div class="switch">
           <input type="checkbox" id="s-fetch-enabled">
           <span class="desc">开启定时自动抓取</span>
