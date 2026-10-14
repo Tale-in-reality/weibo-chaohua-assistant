@@ -119,7 +119,7 @@ pip install -r requirements.txt
 
 ## 打包成 exe（文件夹版）
 
-双击 **`build.bat`**（或 `pip install -r requirements-dev.txt` 后 `python -m PyInstaller app.spec`）：
+双击 **`build.bat`**（或 `pip install -r requirements.txt -r requirements-build.txt` 后 `python -m PyInstaller app.spec`）：
 
 - 产物：`dist/app/app.exe`。**把整个 `dist/app` 文件夹拷给别人**，双击 `app.exe` 即用。
 - 为何是文件夹版而非单文件：启动更快、杀软误报更少；exe 的图标、任务栏、窗口标题栏、托盘、通知图标都来自同一份 `assets/icon.ico`。

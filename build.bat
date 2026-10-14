@@ -2,7 +2,7 @@
 cd /d "%~dp0"
 
 echo === [1/4] 安装依赖（运行 + 打包）===
-python -m pip install -r requirements.txt -r requirements-dev.txt || goto :fail
+python -m pip install -r requirements.txt -r requirements-build.txt || goto :fail
 
 echo.
 echo === [2/4] 准备图标 ===

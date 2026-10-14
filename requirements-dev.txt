@@ -3,6 +3,4 @@
 pytest>=8.0,<9
 httpx>=0.27,<1
 jieba>=0.42,<1
-
-# 打包 exe 才需要（build.bat）；平时跑 app 不需要
-pyinstaller>=6.0,<7
+# 打包 exe 的依赖见 requirements-build.txt（CI 不装）

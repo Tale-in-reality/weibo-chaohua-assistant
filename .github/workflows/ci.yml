@@ -22,7 +22,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: 语法检查（全部源码可编译）
-        run: python -m compileall -q app
+        run: python -m compileall -q app run_app.py tools
 
       - name: 跑测试
         run: pytest -q
