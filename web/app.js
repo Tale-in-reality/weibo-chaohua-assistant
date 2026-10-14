@@ -126,8 +126,10 @@ async function loadDashboard() {
   try { d = await api('/api/dashboard'); } catch (e) { toast('加载失败：' + e.message); return; }
   const c = d.counts;
   const next = d.next_runs.push ? d.next_runs.push.slice(11, 16) : '—';
-  const chao = (d.settings && d.settings.weibo_container_name) || '';
+  const S = d.settings || {};
+  const chao = S.weibo_container_name || '';
   const lastFetch = d.last_fetch ? d.last_fetch.slice(5, 16) : '从未';
+  const autoOn = S.weibo_fetch_enabled === '1';
   $('#dash-status').innerHTML =
     `<span>文案<b>${c.captions}</b></span>`
     + `<span>术语<b>${c.terms}</b></span>`
@@ -135,8 +137,33 @@ async function loadDashboard() {
     + `<span>今日新增<b>${c.events_today}</b></span>`
     + `<span>待确认<b>${c.pending_events}</b></span>`
     + `<span>当前超话<b>${esc(chao || '未选')}</b></span>`
+    + `<span>自动抓取<b>${autoOn ? '开' : '关'}</b></span>`
     + `<span>上次抓取<b>${esc(lastFetch)}</b></span>`
     + `<span>下次推送<b>${esc(next)}</b></span>`;
+
+  // 抓取没开 / 没配好 —— 这是「推送一直没动静」的头号原因，必须显眼提示
+  const cfgBox = $('#dash-fetchcfg');
+  if (cfgBox) {
+    const configured = !!(S.weibo_cookie && S.weibo_containerid);
+    if (autoOn) {
+      cfgBox.hidden = true;
+    } else if (!configured) {
+      cfgBox.hidden = false;
+      cfgBox.innerHTML = '<label>定时抓取还没配置</label>'
+        + '<div class="desc">要自动抓超话，得先在「推送」页扫码登录（<b>用小号</b>）并选定超话。'
+        + '抓到新帖才会生成事件与速览，<b>推送才有内容</b>。</div>'
+        + '<div class="actions"><button class="primary" onclick="go(\'push\')">去配置抓取</button></div>';
+    } else {
+      cfgBox.hidden = false;
+      cfgBox.innerHTML = '<label>⚠ 定时抓取未开启</label>'
+        + '<div class="desc">超话要<b>抓取</b>才有新帖 → 才会生成事件与速览 → <b>推送才有内容</b>。'
+        + '现在「自动抓取」是关的（它和「桌面推送」是两个独立开关），所以不会自动更新，推送也一直没有新东西可推。</div>'
+        + '<div class="actions">'
+        + '<button class="primary" onclick="enableAutoFetch()">开启定时抓取（并立刻补抓一次）</button>'
+        + '<button class="ghost" onclick="go(\'settings\')">去设置</button>'
+        + '</div>';
+    }
+  }
 
   const todo = [];
   if (c.pending_events) todo.push(['待确认事件 ' + c.pending_events, '自动总结出的事件，等你确认或删除', 'events']);
@@ -1885,6 +1912,20 @@ async function stopFetch() {
     await api('/api/fetch/stop', { method: 'POST' });
     toast('已请求停止，正在收尾…');
   } catch (e) { toast(e.message); }
+}
+
+async function enableAutoFetch() {
+  // 概览页「一键开启」：打开自动抓取（后端会立刻按空档补抓一次）
+  try {
+    await api('/api/settings', { method: 'POST', body: { weibo_fetch_enabled: '1' } });
+    const cb = $('#s-fetch-enabled');
+    if (cb) cb.checked = true;          // 同步设置页的复选框
+    toast('已开启定时抓取，正在补抓…');
+    startFetchWatch(90);
+    loadDashboard();
+  } catch (e) {
+    toast('开启失败：' + e.message);
+  }
 }
 
 async function fetchNow() {
