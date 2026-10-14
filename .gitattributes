@@ -10,4 +10,5 @@
 # 二进制
 *.png binary
 *.jpg binary
+*.ico binary
 *.gguf binary

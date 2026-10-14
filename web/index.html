@@ -37,6 +37,21 @@
     <section id="page-dashboard" class="page active">
       <h2>概览</h2>
       <p class="hint">一眼看清当前状态。关掉窗口会最小化到托盘，定时任务继续跑。</p>
+
+      <!-- 首次使用：环境准备向导（检测不到本地模型时自动出现） -->
+      <div class="card" id="setup-wizard" hidden>
+        <div class="pagehead">
+          <label>首次使用 · 环境准备</label>
+          <button class="tiny ghost" onclick="skipWizard()">跳过</button>
+        </div>
+        <div class="desc">写文案需要一个跑在本机的模型（Ollama）。
+          这里帮你<b>一键检测并下载</b>所需的东西，装一次以后就不用管了。</div>
+        <div class="list" id="setup-steps" style="margin-top:10px"></div>
+        <div class="bar" id="setup-bar" hidden><i style="width:0%"></i></div>
+        <div class="desc" id="setup-msg"></div>
+        <div class="actions" id="setup-actions"></div>
+      </div>
+
       <div class="readout" id="dash-status"></div>
       <div class="card">
         <label>待办 Cue</label>
@@ -461,31 +476,58 @@
         <div class="desc" id="s-model-status"></div>
       </div>
 
-      <div class="card">
-        <label>识图中转站（OpenAI 兼容，含 /v1）</label>
-        <input type="text" id="s-vision-url" placeholder="https://你的中转站/v1">
-        <label>API Key</label>
-        <input type="password" id="s-vision-key" placeholder="sk-...">
+      <div class="card" id="card-env">
+        <div class="pagehead">
+          <label>环境检测（Ollama / 模型 / WebView2）</label>
+          <button class="tiny ghost" onclick="recheckSetup()">重新检测</button>
+        </div>
+        <div class="desc" id="s-env-status">检测中…</div>
+        <div class="actions">
+          <button onclick="go('dashboard'); showWizard()">打开环境向导</button>
+        </div>
+      </div>
+
+      <div class="card" id="card-vision">
+        <div class="pagehead">
+          <label>识图（云端大模型看图）</label>
+          <span class="tag maybe" id="s-vision-badge">未配置</span>
+        </div>
+        <div class="desc">本地模型<b>看不了图</b>，所以识图要把照片发给一个<b>云端多模态模型</b>。
+          下面选一个服务商（会自动填好地址和模型），再填你自己申请的 API Key 就行。照片会离开本机，请勿用隐私照片。</div>
+
+        <label>① 选服务商（自动填充地址与模型）</label>
+        <select id="s-vision-preset" onchange="applyVisionPreset()">
+          <option value="">（手动填写 / 或选一个服务商）</option>
+        </select>
+        <div class="desc" id="s-vision-help"></div>
+
+        <label>② 接口地址（OpenAI 兼容）</label>
+        <input type="text" id="s-vision-url" placeholder="https://...（一般以 /v1 结尾）"
+               oninput="renderVisionBadge()">
+        <label>③ API Key（到服务商官网申请后粘贴进来）</label>
+        <input type="password" id="s-vision-key" placeholder="在这一行的服务商官网申请后粘贴进来"
+               oninput="renderVisionBadge()">
         <div class="row">
           <div>
-            <label>识图模型</label>
-            <input type="text" id="s-vision-model" placeholder="从列表选，或自己填">
+            <label>④ 识图模型</label>
+            <input type="text" id="s-vision-model" placeholder="从列表选，或自己填"
+                   oninput="renderVisionBadge()">
           </div>
           <div>
             <label>从模型列表选择</label>
             <select id="s-vision-model-sel" onchange="pickVisionModel()">
-              <option value="">（先点「拉取模型列表」）</option>
+              <option value="">（先点「测试连接」）</option>
             </select>
           </div>
         </div>
         <div class="actions">
           <button onclick="saveVisionSettings()">保存识图设置</button>
-          <button onclick="pullVisionModels()">拉取模型列表</button>
+          <button onclick="pullVisionModels()">测试连接 / 拉取模型列表</button>
         </div>
         <div class="desc" id="s-vision-status"></div>
         <div class="switch">
           <input type="checkbox" id="s-vision-enabled">
-          <span class="desc">开启识图（照片会上传到该中转站，请勿用隐私照片）</span>
+          <span class="desc">开启识图（照片会上传到上面的服务商，请勿用隐私照片）</span>
         </div>
       </div>
 
@@ -602,6 +644,21 @@
       <button class="primary" onclick="closeChoose('minimize')">最小化到托盘</button>
       <button class="danger" onclick="closeChoose('quit')">直接退出</button>
       <button class="ghost" onclick="closeCancel()">取消</button>
+    </div>
+  </div>
+</div>
+<div class="modal-mask" id="vision-guide-modal" hidden>
+  <div class="modal">
+    <div class="modal-title">识图还没配置</div>
+    <div class="modal-body">
+      本地模型<b>看不了图</b>。识图要把照片发给一个<b>云端多模态大模型</b>（如智谱 / 通义千问 / 豆包），
+      所以需要先填它的地址和你的 API Key。<br><br>
+      在「设置 → 识图」里有：<b>选服务商</b>（自动填地址和模型）、<b>怎么申请 Key</b> 的说明，
+      填好点「测试连接」即可。
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="goVisionSettings()">去设置 · 填识图</button>
+      <button class="ghost" onclick="closeVisionGuide()">取消</button>
     </div>
   </div>
 </div>

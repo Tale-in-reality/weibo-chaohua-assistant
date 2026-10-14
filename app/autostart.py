@@ -1,9 +1,10 @@
 """开机自启：Windows 启动文件夹里的快捷方式。"""
 import os
 import subprocess
+import sys
 from pathlib import Path
 
-from .config import APP_NAME, BASE_DIR
+from .config import APP_NAME, BASE_DIR, ICON_ICO
 
 STARTUP_DIR = (Path(os.environ.get("APPDATA", ""))
                / "Microsoft/Windows/Start Menu/Programs/Startup")
@@ -36,17 +37,25 @@ def set_enabled(on: bool) -> bool:
 
 
 def _create_shortcut():
-    """用 PowerShell 的 WScript.Shell 建快捷方式，免装 pywin32。"""
+    """用 PowerShell 的 WScript.Shell 建快捷方式，免装 pywin32。
+
+    打包态直接指向 exe，开发态指向 run.bat；图标统一用 assets/icon.ico。
+    """
     STARTUP_DIR.mkdir(parents=True, exist_ok=True)
-    target = BASE_DIR / "run.bat"
+    if getattr(sys, "frozen", False):
+        target = Path(sys.executable)
+    else:
+        target = BASE_DIR / "run.bat"
     ps = (
         "$ws = New-Object -ComObject WScript.Shell; "
         f"$s = $ws.CreateShortcut('{LNK_PATH}'); "
         f"$s.TargetPath = '{target}'; "
         f"$s.WorkingDirectory = '{BASE_DIR}'; "
         "$s.WindowStyle = 1; "   # 正常窗口（run.bat 用 start 拉起后自己退出，不会留控制台）
-        "$s.Save()"
     )
+    if ICON_ICO.exists():
+        ps += f"$s.IconLocation = '{ICON_ICO}'; "
+    ps += "$s.Save()"
     subprocess.run(
         ["powershell", "-NoProfile", "-Command", ps],
         check=True, capture_output=True,

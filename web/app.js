@@ -110,6 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 每次打开 app 都核一遍登录态和已选超话，避免显示陈旧状态
   qrCheckLogin();
   refreshChaohua();
+  checkSetup(true);        // 缺环境（没装 Ollama / 没拉模型）就自动弹首启向导
   window.addEventListener('hashchange', () => {
     const [p, a] = (location.hash || '#dashboard').slice(1).split('/');
     if (p === 'events' && a) _focusEvent = Number(a) || null;
@@ -152,6 +153,146 @@ async function loadDashboard() {
     : `未连上 Ollama（${esc(m.url)}）。请先启动 Ollama，并拉取模型：<code>ollama pull qwen2.5:7b-instruct</code>`;
 }
 
+/* ---------------- 首启环境向导（Ollama / 模型 / WebView2） ---------------- */
+
+let SETUP = null;         // 最近一次 /api/setup/check 结果
+let _setupTimer = null;   // 安装/下载进度轮询
+
+async function checkSetup(auto) {
+  try { SETUP = await api('/api/setup/check'); } catch (e) { SETUP = null; }
+  renderSetup();
+  renderEnvCard();
+  // 有正在跑的任务 → 接着轮询进度
+  try {
+    const st = await api('/api/setup/status');
+    if (st && st.task && !st.done) startSetupPoll();
+  } catch (e) { /* 忽略 */ }
+  if (auto && SETUP && SETUP.needs_setup && !SETUP.wizard_done) showWizard();
+}
+
+function recheckSetup() {
+  toast('检测中…');
+  checkSetup(false).then(() => toast('已重新检测'));
+}
+
+function showWizard() { const w = $('#setup-wizard'); if (w) w.hidden = false; }
+function hideWizard() { const w = $('#setup-wizard'); if (w) w.hidden = true; }
+
+async function skipWizard() {
+  try { await api('/api/setup/done', { method: 'POST', body: { done: true } }); } catch (e) { /* 忽略 */ }
+  hideWizard();
+}
+
+async function finishWizard() {
+  try { await api('/api/setup/done', { method: 'POST', body: { done: true } }); } catch (e) { /* 忽略 */ }
+  hideWizard();
+  toast('环境已就绪');
+}
+
+function _stepRow(ok, title, desc) {
+  const mark = ok ? '<span class="ok">✔</span>' : '<span class="no">✖</span>';
+  return `<div class="item"><div class="body"><div class="title">${mark} ${esc(title)}</div>`
+    + `<div class="desc">${esc(desc)}</div></div></div>`;
+}
+
+function renderSetup() {
+  const steps = $('#setup-steps');
+  const actions = $('#setup-actions');
+  if (!steps || !actions || !SETUP) return;
+  const s = SETUP;
+
+  steps.innerHTML =
+    _stepRow(s.ollama_running, '本地模型运行时（Ollama）',
+      s.ollama_running ? '正在运行'
+        : (s.ollama_installed ? '已安装，但没在运行 —— 启动 Ollama 再重新检测'
+          : '还没安装 —— 点下面「一键下载并安装」'))
+    + _stepRow(s.model_present, `模型 ${s.model}`,
+      s.model_present ? '已就绪'
+        : (s.ollama_running ? '还没下载 —— 点下面「一键下载模型」' : '等 Ollama 就绪后再下载'))
+    + (s.webview2 ? '' : _stepRow(false, 'WebView2 运行时',
+      '缺失（Win10/11 一般自带；缺失请装 Microsoft Edge WebView2 Runtime）'));
+
+  const btns = [];
+  if (!s.ollama_running) {
+    const opts = (s.ollama_mirrors || ['官方'])
+      .map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+    btns.push('<span class="desc" style="margin-right:6px">下载源</span>'
+      + `<select id="setup-mirror" style="max-width:210px">${opts}</select>`);
+    btns.push('<button class="primary" onclick="setupInstallOllama()">① 一键下载并安装 Ollama</button>');
+    btns.push('<button onclick="recheckSetup()">我已自行安装，重新检测</button>');
+  } else if (!s.model_present) {
+    const opts = [s.default_model, ...(s.alt_models || [])]
+      .map((m, i) => `<option value="${esc(m)}"${i === 0 ? ' selected' : ''}>${esc(m)}</option>`).join('');
+    btns.push('<span class="desc" style="margin-right:6px">选模型</span>'
+      + `<select id="setup-model" style="max-width:210px">${opts}</select>`);
+    btns.push('<button class="primary" onclick="setupPullModel()">② 一键下载模型</button>');
+  } else {
+    btns.push('<button class="primary" onclick="finishWizard()">✓ 全部就绪，开始使用</button>');
+  }
+  btns.push('<button class="ghost" id="setup-cancel" onclick="setupCancel()" hidden>取消下载</button>');
+  actions.innerHTML = btns.join('');
+}
+
+function renderEnvCard() {
+  const el = $('#s-env-status');
+  if (!el) return;
+  if (!SETUP) { el.textContent = '检测失败（后端可能没起来，重启 app 试试）'; return; }
+  const s = SETUP;
+  el.textContent = [
+    `Ollama：${s.ollama_running ? '运行中' : (s.ollama_installed ? '已装未运行' : '未安装')}`,
+    `模型 ${s.model}：${s.model_present ? '就绪' : '未就绪'}`,
+    `WebView2：${s.webview2 ? '已装' : '缺失'}`,
+  ].join('　|　') + (s.needs_setup ? '　—— 建议走一遍「打开环境向导」' : '　—— 一切就绪');
+}
+
+async function setupInstallOllama() {
+  const mirror = ($('#setup-mirror') || {}).value || '';
+  const r = await api('/api/setup/install_ollama', { method: 'POST', body: { mirror } });
+  if (!r.ok) { toast(r.error || '启动失败'); return; }
+  startSetupPoll();
+}
+
+async function setupPullModel() {
+  const model = ($('#setup-model') || {}).value || (SETUP && SETUP.default_model) || '';
+  const r = await api('/api/setup/pull_model', { method: 'POST', body: { model } });
+  if (!r.ok) { toast(r.error || '启动失败'); return; }
+  startSetupPoll();
+}
+
+function setupCancel() {
+  api('/api/setup/cancel', { method: 'POST' }).catch(() => { /* 忽略 */ });
+  toast('正在取消…');
+}
+
+function startSetupPoll() {
+  if (_setupTimer) return;
+  const cancelBtn = $('#setup-cancel');
+  if (cancelBtn) cancelBtn.hidden = false;
+  _setupTimer = setInterval(async () => {
+    let st;
+    try { st = await api('/api/setup/status'); } catch (e) { return; }
+    const bar = $('#setup-bar');
+    if (bar) {
+      bar.hidden = false;
+      const i = bar.querySelector('i');
+      if (i) i.style.width = (st.done ? 100 : (st.percent || 0)) + '%';
+    }
+    const msg = $('#setup-msg');
+    if (msg) msg.textContent = st.error ? ('✖ ' + st.error)
+      : ((st.phase || '') + (st.message ? ' · ' + st.message : ''));
+    if (st.done) {
+      clearInterval(_setupTimer); _setupTimer = null;
+      if (bar) bar.hidden = true;
+      const cb = $('#setup-cancel'); if (cb) cb.hidden = true;
+      if (!st.error) {
+        toast('完成');
+        await checkSetup(false);
+        renderSetup();
+      }
+    }
+  }, 1000);
+}
+
 /* ---------------- 写文案 ---------------- */
 
 let TEMPLATES = [];
@@ -170,7 +311,11 @@ async function loadWrite() {
   loadRefSongs();
   try {
     const s = await api('/api/settings');
-    updateVisionBtn(s.vision_enabled === '1');
+    VISION = {
+      enabled: s.vision_enabled === '1',
+      configured: !!(s.vision_base_url && s.vision_api_key && s.vision_model),
+    };
+    updateVisionBtn();
   } catch (e) { /* 忽略：识图非必需 */ }
 }
 
@@ -377,11 +522,71 @@ let IMGS = [];          // [{b64, mime}]
 let EXIF_STR = '';
 const MAX_IMGS = 6;
 
-function updateVisionBtn(on) {
+// 识图是否可用（由设置页/写文案页加载设置时更新）。未配置时按钮不再禁用，
+// 而是点击弹引导 —— 让用户明确知道「去哪填」。
+let VISION = { enabled: false, configured: false };
+
+// 国产/常见服务商预设：一键把「地址 + 模型」填好，用户只需填自己的 Key。
+// 模型 id 可能随时间变化 —— 改这里即可，不用动后端。
+const VISION_PRESETS = [
+  {
+    id: 'zhipu', name: '智谱 GLM（有免费额度，推荐先试）',
+    url: 'https://open.bigmodel.cn/api/paas/v4',
+    model: 'glm-4v-flash',
+    help: '① 打开 open.bigmodel.cn → 注册/登录 → 左侧「API Keys」新建一个 Key。'
+      + '② 把它粘到下面「API Key」。③ 模型用 glm-4v-flash（免费）或 glm-4v-plus。',
+  },
+  {
+    id: 'dashscope', name: '通义千问 VL（阿里云百炼）',
+    url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    model: 'qwen-vl-plus',
+    help: '① 打开 bailian.console.aliyun.com → 开通「百炼」→「API-KEY」新建。'
+      + '② 粘到下面「API Key」。③ 模型 qwen-vl-plus 或 qwen-vl-max。',
+  },
+  {
+    id: 'ark', name: '豆包（火山方舟）',
+    url: 'https://ark.cn-beijing.volces.com/api/v3',
+    model: '',
+    help: '① 打开 console.volcengine.com/ark → 开通 →「API Key 管理」新建。'
+      + '② 在「在线推理」建一个接入点，把它给的接入点 ID（ep- 开头）填进下面「识图模型」。'
+      + '③ 地址和 Key 分别粘到下面。',
+  },
+  {
+    id: 'siliconflow', name: '硅基流动 SiliconFlow',
+    url: 'https://api.siliconflow.cn/v1',
+    model: 'Qwen/Qwen2.5-VL-72B-Instruct',
+    help: '① 打开 siliconflow.cn → 注册 →「API 密钥」新建。'
+      + '② 粘到下面「API Key」。③ 模型选一个带 VL 的（如 Qwen/Qwen2.5-VL-72B-Instruct）。',
+  },
+  {
+    id: 'custom', name: '其它 OpenAI 兼容中转站（手动填）',
+    url: '', model: '',
+    help: '填你中转站的地址（通常以 /v1 结尾）、密钥，以及它的视觉模型名。',
+  },
+];
+
+function updateVisionBtn() {
   const b = $('#w-vision-btn');
   if (!b) return;
-  b.disabled = !on;
-  b.title = on ? '' : '识图未开启：去设置页开启并填写中转站地址/密钥';
+  const ready = VISION.enabled && VISION.configured;
+  b.classList.toggle('needs-config', !ready);
+  b.title = ready ? '' : '识图还没配置：点一下看怎么设置';
+}
+
+/* ---- 识图引导：未配置时点「识图」弹这个，并能一键跳到设置页对应卡片 ---- */
+
+function showVisionGuide() { const m = $('#vision-guide-modal'); if (m) m.hidden = false; }
+function closeVisionGuide() { const m = $('#vision-guide-modal'); if (m) m.hidden = true; }
+
+function goVisionSettings() {
+  closeVisionGuide();
+  go('settings');
+  const card = $('#card-vision');
+  if (card) {
+    card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    card.classList.add('flash');
+    setTimeout(() => card.classList.remove('flash'), 1700);
+  }
 }
 
 function _readAsDataURL(file) {
@@ -441,6 +646,7 @@ function clearImage() {
 
 async function describeImage() {
   if (!IMGS.length) { toast('请先选择照片'); return; }
+  if (!(VISION.enabled && VISION.configured)) { showVisionGuide(); return; }
   const btn = $('#w-vision-btn');
   const n = IMGS.length;
   btn.disabled = true;
@@ -1516,6 +1722,10 @@ async function loadSettings() {
   $('#s-vision-model').value = s.vision_model || '';
   $('#s-vision-enabled').checked = s.vision_enabled === '1';
   $('#s-vision-status').textContent = '';
+  $('#s-vision-preset').value = '';
+  $('#s-vision-help').textContent = '';
+  renderVisionPresetOptions();
+  renderVisionBadge();
   $('#s-weibo-cookie').value = s.weibo_cookie || '';
   $('#s-weibo-containerid').value = s.weibo_containerid || '';
   $('#s-fetch-enabled').checked = s.weibo_fetch_enabled === '1';
@@ -1523,6 +1733,7 @@ async function loadSettings() {
   $('#s-fetch-interval').value = s.weibo_fetch_interval_min || 60;
   $('#s-fetch-pages').value = s.weibo_max_pages || 20;
   loadRuns();
+  checkSetup(false);       // 刷新「环境检测」卡
 }
 
 async function saveSettings(keys) {
@@ -1613,17 +1824,51 @@ async function fetchNow() {
   }
 }
 
+/* ---- 识图预设 / 状态徽标 ---- */
+
+function renderVisionPresetOptions() {
+  const sel = $('#s-vision-preset');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">（手动填写 / 或选一个服务商）</option>' +
+    VISION_PRESETS.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+}
+
+function applyVisionPreset() {
+  const p = VISION_PRESETS.find((x) => x.id === $('#s-vision-preset').value);
+  if (!p) { $('#s-vision-help').textContent = ''; return; }
+  if (p.url) $('#s-vision-url').value = p.url;
+  if (p.model) $('#s-vision-model').value = p.model;
+  $('#s-vision-help').textContent = p.help;
+  renderVisionBadge();
+}
+
+function renderVisionBadge() {
+  const b = $('#s-vision-badge');
+  if (!b) return;
+  const url = ($('#s-vision-url').value || '').trim();
+  const key = ($('#s-vision-key').value || '').trim();
+  const model = ($('#s-vision-model').value || '').trim();
+  const miss = [!url && '地址', !key && '密钥', !model && '模型'].filter(Boolean);
+  if (!miss.length) { b.className = 'tag likely'; b.textContent = '已配置 ✓'; }
+  else { b.className = 'tag maybe'; b.textContent = '未配置（还缺：' + miss.join('、') + '）'; }
+}
+
 async function saveVisionSettings() {
-  await api('/api/settings', {
-    method: 'POST',
-    body: {
-      vision_base_url: $('#s-vision-url').value.trim(),
-      vision_api_key: $('#s-vision-key').value.trim(),
-      vision_model: $('#s-vision-model').value.trim(),
-      vision_enabled: $('#s-vision-enabled').checked ? '1' : '0',
-    },
-  });
-  toast('识图设置已保存');
+  const body = {
+    vision_base_url: $('#s-vision-url').value.trim(),
+    vision_api_key: $('#s-vision-key').value.trim(),
+    vision_model: $('#s-vision-model').value.trim(),
+    vision_enabled: $('#s-vision-enabled').checked ? '1' : '0',
+  };
+  await api('/api/settings', { method: 'POST', body });
+  // 立刻同步「写文案」页的识图可用状态（不用来回切页）
+  VISION = {
+    enabled: body.vision_enabled === '1',
+    configured: !!(body.vision_base_url && body.vision_api_key && body.vision_model),
+  };
+  updateVisionBtn();
+  renderVisionBadge();
+  toast(VISION.enabled && VISION.configured ? '识图设置已保存，可以用了' : '识图设置已保存');
 }
 
 async function pullVisionModels() {

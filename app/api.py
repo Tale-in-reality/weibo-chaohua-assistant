@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from . import autostart, db, llm, scheduler, winref
 from .config import APP_NAME, VERSION, WEB_DIR
 from .notify import last_error, notify
-from .modules import (captions, events, fetcher, housekeeping, style, summarize,
-                      terms, vision, weibo_login, weibo_user)
+from .modules import (captions, events, fetcher, housekeeping, setup, style,
+                      summarize, terms, vision, weibo_login, weibo_user)
 
 app = FastAPI(title=APP_NAME, version=VERSION)
 
@@ -724,6 +724,44 @@ def vision_describe(req: VisionDescribeReq):
         raise HTTPException(500, f"识图失败：{e}")
     finally:
         winref.BUSY -= 1
+
+
+# ==================== 首启环境向导（Ollama / 模型 / WebView2） ====================
+
+@app.get("/api/setup/check")
+def setup_check():
+    """检测本机环境缺什么（Ollama 是否装/在跑、模型是否就绪、WebView2 是否存在）。"""
+    return setup.check()
+
+
+@app.get("/api/setup/status")
+def setup_status():
+    """当前安装/下载任务的进度（前端每秒轮询）。"""
+    return setup.status()
+
+
+@app.post("/api/setup/install_ollama")
+def setup_install_ollama(payload: dict = Body(default={})):
+    """一键下载并静默安装 Ollama（后台线程；进度看 /api/setup/status）。"""
+    return setup.install_ollama((payload or {}).get("mirror", ""))
+
+
+@app.post("/api/setup/pull_model")
+def setup_pull_model(payload: dict = Body(default={})):
+    """一键拉取模型权重（后台线程；进度看 /api/setup/status）。"""
+    return setup.pull_model((payload or {}).get("model", ""))
+
+
+@app.post("/api/setup/cancel")
+def setup_cancel():
+    return setup.cancel()
+
+
+@app.post("/api/setup/done")
+def setup_done(payload: dict = Body(default={})):
+    """记下向导已完成/已跳过，之后不再自动弹。"""
+    db.set_setting("setup_wizard_done", "1" if (payload or {}).get("done", True) else "0")
+    return {"ok": True}
 
 
 # ==================== 设置 ====================

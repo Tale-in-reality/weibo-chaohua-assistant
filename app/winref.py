@@ -4,7 +4,7 @@
 `--server-only`（调试壳）时为 None，此时 /api/navigate 返回 has_window=False，
 **不会退回去开网页**。
 """
-from .config import HOST, PORT
+from . import config
 
 WINDOW = None
 QUIT = None        # GUI 模式设成「停托盘 + 关窗口」的可调用对象
@@ -45,8 +45,9 @@ def focus(page: str = "dashboard", event: str = "") -> bool:
     except Exception:
         pass
     # 重新载入带 hash 的地址 → 前端启动时解析（最稳）
+    # 注意用 config.get_port() 而不是导入时的快照：端口是运行时选定的。
     try:
-        w.load_url(f"http://{HOST}:{PORT}/{hash_}")
+        w.load_url(f"http://{config.HOST}:{config.get_port()}/{hash_}")
         return True
     except Exception:
         pass

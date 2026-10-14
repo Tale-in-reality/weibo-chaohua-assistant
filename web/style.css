@@ -556,4 +556,16 @@ button.danger:hover{background:rgba(255,177,94,.1)}
 .item.warn::before{color:var(--amber)}
 .item.warn .title{color:var(--amber)}
 
+/* ---------------- 环境向导 / 识图引导 ---------------- */
+
+/* 定位到某张设置卡时的短暂高亮（「去设置」跳转用） */
+.card.flash{border-color:var(--spot);box-shadow:0 0 0 1px var(--spot-soft),0 0 22px var(--spot-soft)}
+
+/* 识图按钮还没配置时的提示态（不是禁用 —— 点了会弹引导） */
+#w-vision-btn.needs-config{border-color:var(--amber);color:var(--amber)}
+
+/* 向导步骤行：✔ / ✖ 用状态色，不用图标字体 */
+#setup-steps .item .title .ok{color:var(--gel)}
+#setup-steps .item .title .no{color:var(--amber)}
+
 

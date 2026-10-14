@@ -1,18 +1,77 @@
 """全局路径与默认配置。"""
+import os
+import sys
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-APP_DIR = BASE_DIR / "app"
-WEB_DIR = BASE_DIR / "web"
-DATA_DIR = BASE_DIR / "data"
+# ── 冻结（PyInstaller）检测 ─────────────────────────────────────────────
+# 打包后 __file__ 指向解包出的只读目录，`data/` 必须落到 exe 旁边（可写、便携）。
+#   BASE_DIR：可写根目录（冻结时 = exe 所在文件夹；开发时 = 仓库根）
+#   RES_DIR ：只读资源根目录（冻结时 = _MEIPASS；开发时 = 仓库根）
+FROZEN = bool(getattr(sys, "frozen", False))
+if FROZEN:
+    BASE_DIR = Path(sys.executable).resolve().parent
+    RES_DIR = Path(getattr(sys, "_MEIPASS", BASE_DIR))
+else:
+    BASE_DIR = RES_DIR = Path(__file__).resolve().parent.parent
+
+APP_DIR = RES_DIR / "app"
+WEB_DIR = RES_DIR / "web"
+ASSETS_DIR = RES_DIR / "assets"
+MODELS_DIR = RES_DIR / "models"
+ICON_ICO = ASSETS_DIR / "icon.ico"     # 窗口 / 任务栏 / 托盘 / exe 图标
+ICON_PNG = ASSETS_DIR / "icon.png"     # 通知弹窗图标（winotify 只吃 .png）
+
+
+def _writable_dir(preferred: Path) -> Path:
+    """优先用 exe 旁的 data/；装到只读目录（如 Program Files）时回退到 LOCALAPPDATA。
+
+    打包成文件夹版后正常在桌面/下载目录解压，这里是可写的；回退只为极端情况兜底。
+    """
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except Exception:
+        alt = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "WeiboChaohuaAssistant"
+        alt.mkdir(parents=True, exist_ok=True)
+        return alt
+
+
+DATA_DIR = _writable_dir(BASE_DIR / "data")
 DB_PATH = DATA_DIR / "fan.db"
 
 HOST = "127.0.0.1"
-PORT = 8756
+
+# ── 端口：优先用 DEFAULT_PORT，被占则运行时换成空闲口（见 main.pick_port）──
+DEFAULT_PORT = 8756
+PORT = DEFAULT_PORT                    # 运行时可变；跨进程读 PORT_FILE
+PORT_FILE = DATA_DIR / "port"          # toast_click.py（独立进程）靠它拿到当前端口
+
 APP_NAME = "微博超话助手"
 VERSION = "0.1.0"
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+def set_port(port: int) -> int:
+    """记录本次实际监听端口，并落盘供跨进程读取。"""
+    global PORT
+    PORT = int(port)
+    try:
+        PORT_FILE.write_text(str(PORT), encoding="utf-8")
+    except Exception:
+        pass
+    return PORT
+
+
+def get_port() -> int:
+    """本进程当前端口（注意别 `from .config import PORT` —— 那是值快照，不会跟着变）。"""
+    return PORT
+
+
+def read_port_file() -> int:
+    """跨进程读当前端口（toast_click / 单实例唤起用）。读不到回退默认端口。"""
+    try:
+        return int(PORT_FILE.read_text(encoding="utf-8").strip())
+    except Exception:
+        return DEFAULT_PORT
 
 # 设置项默认值（首次写库时插入，之后以库为准）
 DEFAULT_SETTINGS = {
@@ -29,6 +88,8 @@ DEFAULT_SETTINGS = {
 
     "autostart": "0",             # 开机自启
     "close_action": "ask",        # 点窗口×时：ask 询问 / minimize 最小化到托盘 / quit 直接退出
+
+    "setup_wizard_done": "0",     # 首启环境向导是否已完成/已跳过（1 后不再自动弹）
 
     "sms_enabled": "0",           # 短信推送（预留）
     "sms_provider": "",

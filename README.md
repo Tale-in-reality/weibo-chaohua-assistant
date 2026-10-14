@@ -34,10 +34,13 @@
 | **校对台** | 从文案库自动抽可疑词 → 让模型填释义草稿 → 你校准 |
 | **超话抓取** | 扫码登录（小号）→ 抓「最新」排序的帖子 → 过滤水贴 → 自动总结 |
 | **桌面推送** | 有新速览时弹窗；点弹窗直接跳进 app 的那条速览 |
-| **识图写文案**（可选） | 照片 → 云端多模态模型描述画面 → 注入本地写文案的 prompt（默认关闭，照片会出网） |
+| **识图写文案**（可选） | 照片 → 云端多模态模型描述画面 → 注入本地写文案的 prompt（默认关闭，照片会出网）。设置页内置**智谱 / 通义千问 / 豆包 / 硅基流动**等预设，选一个自动填好地址与模型，你只填自己的 API Key |
+| **首启环境向导** | 第一次打开自动**检测 Ollama / 模型 / WebView2**，缺什么一键下载安装（装一次以后不用管） |
 | **数据维护** | 一键**导出 JSON 备份**（不含设置与登录 cookie）；每天自动清理日志与旧帖（事件/术语/文案不动） |
 
-**应用形态**：双击 `run.bat` 只出一个窗口（`pythonw` 启动，无控制台）；关窗最小化到托盘、定时任务继续跑；点 × 弹「最小化 / 直接退出」选择框（可在设置里固定）。
+**应用形态**：是一个真正的 Windows 桌面程序 —— 任务栏 / 窗口左上角 / 托盘 / 通知**四处图标一致**（同一份 `assets/icon.ico`）。可以打包成**文件夹版 `app.exe`**（见 [打包](#打包成-exe文件夹版)），拷给别人**双击即用、无需装 Python**。关窗最小化到托盘、定时任务继续跑；点 × 弹「最小化 / 直接退出」选择框（可在设置里固定）。
+
+**端口**：本地服务默认监听 `127.0.0.1:8756`；**若该端口已被占用会自动改用其它空闲端口**，不会和别的程序冲突，也不会因此启动失败（实际端口写在 `data/port`）。
 
 ---
 
@@ -59,15 +62,24 @@
 ## 环境要求
 
 - **Windows 10/11**（用了 pywebview / pystray / winotify，目前只支持 Windows）
-- **Python 3.10+**
-- **Ollama**（本地模型运行时）
+- **Ollama**（本地模型运行时）—— 唯一躲不掉的外部依赖；没装时 app 会**一键引导下载**
+- **Python 3.10+**（仅**从源码运行**时需要；用打包好的 `app.exe` 则**不需要**）
 - 显存 4GB 可跑 7B（会 offload 到内存，稍慢但写短文案够用）；嫌慢可换 3B
 
 ---
 
 ## 安装
 
-### 1. 装 Ollama 并准备模型
+### 方式 A：用打包好的 app.exe（推荐给不想装环境的人）
+
+拿到 `app` 文件夹后，直接双击 **`app.exe`**。里面已经带了 Python 和全部依赖。
+
+- **首次打开**会自动检测环境：没装 Ollama / 没拉模型，会弹出**环境向导**，点「一键下载并安装」即可（国内网络可切镜像源）。
+- `data/` 会生成在 `app.exe` 同目录（便携；拷走整个文件夹，数据也跟着走）。
+
+### 方式 B：从源码运行
+
+#### 1. 装 Ollama 并准备模型
 
 从 <https://ollama.com/download> 安装，装完启动（托盘出现羊驼图标）。
 
@@ -84,23 +96,35 @@ ollama pull qwen2.5:7b-instruct     # 或 qwen2.5:3b
 > ```
 > ⚠️ Ollama **不支持分片（split）GGUF**，务必选单文件版本。
 
-### 2. 装 Python 依赖
+#### 2. 装 Python 依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 3. 启动
+#### 3. 启动
 
 双击 **`run.bat`**（或命令行 `python -m app.main`）。
 
 - 只出一个应用窗口，没有黑框。
-- **重复双击不会开出第二个**：已有的窗口会被唤到前台，第二个实例静默退出。这样避免两个实例抢 8756 端口、导致后端起不来。
+- **重复双击不会开出第二个**：已有的窗口会被唤到前台，第二个实例静默退出。
   （万一遇到「双击没反应、再双击又说已经在运行」：那多半是个**没有窗口的僵尸进程**占着锁。
   它会在 60 秒内自行退出，稍等再双击即可；急用就去任务管理器结束 `pythonw.exe`。）
 - 关窗 ≠ 退出：会最小化到**托盘**，定时任务继续跑；彻底退出在托盘右键菜单。
 - 启动没反应时看 `data/app.log`。
-- 调试可以只跑服务：`python -m app.main --server-only`，浏览器开 <http://127.0.0.1:8756>。
+- 调试可以只跑服务：`python -m app.main --server-only`，浏览器开 <http://127.0.0.1:8756>
+  （若 8756 被占会自动换端口，实际端口见 `data/port`）。
+
+---
+
+## 打包成 exe（文件夹版）
+
+双击 **`build.bat`**（或 `pip install -r requirements-dev.txt` 后 `python -m PyInstaller app.spec`）：
+
+- 产物：`dist/app/app.exe`。**把整个 `dist/app` 文件夹拷给别人**，双击 `app.exe` 即用。
+- 为何是文件夹版而非单文件：启动更快、杀软误报更少；exe 的图标、任务栏、窗口标题栏、托盘、通知图标都来自同一份 `assets/icon.ico`。
+- 图标可改：编辑 `tools/make_icon.py` 后跑 `python tools/make_icon.py` 重新生成 `assets/icon.ico` / `icon.png`。
+- Ollama 与模型权重**不**打进 exe（太大），由**首启环境向导**负责检测与一键下载。
 
 ---
 
@@ -164,7 +188,7 @@ app/
   notify.py      Windows 桌面弹窗（winotify）+ 点击跳回 app 的协议注册
   winref.py      运行中的窗口引用（唤起窗口 / 跳页）
   toast_click.py 弹窗点击的回调入口（独立进程，只用标准库）
-  autostart.py   开机自启
+  autostart.py   开机自启（打包态指向 exe）
   modules/
     captions.py    写文案：检索 + 注入 prompt
     terms.py       术语词典 + 候选抽取
@@ -174,13 +198,19 @@ app/
     weibo_login.py 扫码登录、按名找超话、登录态检查
     vision.py      识图（可选，云端 VLM）
     style.py       风格档案（读完全部文案 → 蒸馏成说明书）
+    setup.py       首启环境检测 + 一键下载 Ollama / 拉模型 / 查 WebView2
     housekeeping.py 数据清理（日志截断 / 旧帖回收）
   util.py        公共工具（JSON 抠取 / jieba 分词 / BM25 检索）
+assets/          icon.ico / icon.png（窗口/任务栏/托盘/通知，四处一致）
+tools/           make_icon.py（重新生成图标，改了品牌色跑它）
 docs/            finetune.md（要不要微调、要多少数据、云训练多少钱）
 web/             index.html / app.js / style.css（无框架，原生 JS）
 tests/           pytest 用例（纯函数 + 数据层，用临时库，不碰真实数据）
-data/            运行后生成：fan.db（文案/术语/事件/设置/cookie）
+data/            运行后生成：fan.db（文案/术语/事件/设置/cookie）、port（当前端口）
 models/          Modelfile（导入 GGUF 用）
+run_app.py       打包入口（PyInstaller 用；开发态仍用 python -m app.main）
+app.spec         PyInstaller 配置（文件夹版）
+build.bat        一键打包 → dist/app/app.exe
 ```
 
 `data/` **不入版本库**——里面存着你的微博 cookie 和各库内容，请勿外传。

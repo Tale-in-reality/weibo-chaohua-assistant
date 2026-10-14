@@ -15,6 +15,11 @@ __pycache__/
 venv/
 env/
 
+# ── 打包产物（PyInstaller）──
+build/
+dist/
+*.manifest
+
 # ── 日志 / 临时 ──
 *.log
 _*.txt

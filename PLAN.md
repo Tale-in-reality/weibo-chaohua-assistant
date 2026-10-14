@@ -15,13 +15,15 @@
 
 | 层 | 选型 |
 |---|---|
-| 界面 | FastAPI 本地服务 + pywebview 独立窗口（HTML/CSS/JS） |
-| 模型 | Ollama（`qwen2.5:7b-instruct`，备选 `3b`） |
-| 数据库 | SQLite（`data/fan.db`） |
+| 界面 | FastAPI 本地服务 + pywebview 独立窗口（HTML/CSS/JS）；端口默认 8756，被占自动换空闲口 |
+| 打包 | PyInstaller 文件夹版（`app.spec` / `build.bat` → `dist/app/app.exe`）；`run_app.py` 为打包入口 |
+| 图标 | `assets/icon.ico`（任务栏/窗口/托盘/通知/exe/快捷方式统一）；`tools/make_icon.py` 生成 |
+| 模型 | Ollama（`qwen2.5:7b-instruct`，备选 `3b`）；首启向导可检测 + 一键下载 |
+| 数据库 | SQLite（`data/fan.db`；打包后 data/ 落在 exe 旁，便携） |
 | 定时 | APScheduler（进程内） |
 | 推送 | winotify 桌面弹窗；短信预留接口 |
 | 常驻 | pystray 托盘 + 关窗最小化到托盘 |
-| 自启 | 启动文件夹快捷方式（app 内开关） |
+| 自启 | 启动文件夹快捷方式（app 内开关；打包态指向 exe） |
 
 > **关窗不退出**——最小化到托盘，调度器继续运行，「开机自启 → 定时总结/推送」才成立。
 

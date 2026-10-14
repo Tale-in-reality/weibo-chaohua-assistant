@@ -3,6 +3,7 @@ import os
 import shutil
 
 from . import db
+from .config import ICON_PNG
 
 
 def _ensure_powershell_on_path() -> None:
@@ -30,17 +31,28 @@ SCHEME = "chaohua"          # 桌面弹窗点击用的自定义协议 → 唤起
 _LAST_ERROR = ""
 
 
-def register_click_protocol() -> bool:
-    """把 chaohua:// 注册成「唤起 app 窗口」的协议（幂等）。
-    弹窗 launch 用 chaohua://events/<id>，点击时由系统拉起 toast_click.py，
-    它再调本地 API 让运行中的窗口显示并跳页 —— 全程不开浏览器。"""
+def _click_command() -> str:
+    """点击弹窗时系统实际执行的命令。
+
+    - 打包态：`app.exe --toast-click "%1"`（复用同一个 exe，跟主程序同路径，最稳）。
+    - 开发态：`pythonw.exe app/toast_click.py "%1"`。
+    """
     import sys
-    import winreg
+    if getattr(sys, "frozen", False):
+        return f'"{sys.executable}" --toast-click "%1"'
     from pathlib import Path
     script = Path(__file__).resolve().parent / "toast_click.py"
     pyw = Path(sys.executable).with_name("pythonw.exe")
     exe = pyw if pyw.exists() else Path(sys.executable)
-    cmd = f'"{exe}" "{script}" "%1"'
+    return f'"{exe}" "{script}" "%1"'
+
+
+def register_click_protocol() -> bool:
+    """把 chaohua:// 注册成「唤起 app 窗口」的协议（幂等）。
+    弹窗 launch 用 chaohua://events/<id>，点击时由系统拉起上面的命令，
+    它再调本地 API 让运行中的窗口显示并跳页 —— 全程不开浏览器。"""
+    import winreg
+    cmd = _click_command()
     try:
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
                               rf"Software\Classes\{SCHEME}") as k:
@@ -85,7 +97,9 @@ def _desktop(title: str, body: str, launch: str = "") -> bool:
         return False
     try:
         # launch：整条通知被点击时打开（这里是带 hash 的本地页面，跳进对应事件）
-        toast = Notification(app_id=APP_ID, title=title, msg=body, launch=launch)
+        # icon：winotify 只认绝对路径的 .png —— 用品牌图标，和窗口/托盘一致。
+        icon = str(ICON_PNG) if ICON_PNG.exists() else ""
+        toast = Notification(app_id=APP_ID, title=title, msg=body, launch=launch, icon=icon)
         toast.set_audio(audio.Default, loop=False)
         toast.show()
         return True
