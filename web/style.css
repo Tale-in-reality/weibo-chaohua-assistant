@@ -1,0 +1,559 @@
+/* ============================================================
+   微博超话助手 · 「黑场 · 追光」
+   世界：演唱会调光台与灯位图。黑场里的光束、雾、滤色片、推子。
+   品牌粉 = 追光；光束暖白 = 正文；琥珀/滤色青 = 通道状态。
+   ============================================================ */
+
+/* hidden 属性不能被后面的 display 规则盖掉（否则「默认隐藏」的元素会一直显示） */
+[hidden]{display:none !important}
+
+:root{
+  color-scheme:dark;
+
+  --blackout:#0c0c11;      /* 黑场 —— 场地熄灯后的底 */
+  --deck:#12121a;          /* 台体 */
+  --deck-2:#191922;        /* 台体高光面 */
+  --deck-3:#1e1e29;        /* 台体：被按亮的面（悬停行/键） */
+  --well:#0e0e15;          /* 凹槽（输入） */
+  --beam:#fff3ee;          /* 光束暖白 —— 正文 */
+  --dim:#a8a1ab;           /* 雾里的字 */
+  --dim-2:#8f8896;         /* 更远的雾（≥4.5:1 on deck-2） */
+  --spot:#ff4f86;          /* 追光粉 —— 品牌主色（光束/LED/强调） */
+  --spot-2:#ff7ea6;        /* 粉的亮面 / 粉字 */
+  --sakura:#ffb7c5;        /* 樱花粉 —— **按钮底**（比品牌粉淡、比它柔） */
+  --sakura-hi:#ffc9d6;     /* 悬停：再亮一点 */
+  --sakura-lo:#f5a3b6;     /* 按下/描边：压深一点 */
+  --on-sakura:#5c1630;     /* 樱花粉上的字（深玫瑰，对比约 7.5:1） */
+  --spot-soft:rgba(255,79,134,.13);
+  --amber:#ffb15e;         /* 舞台琥珀 —— 待确认/提醒 */
+  --gel:#6be0d6;           /* 滤色青 —— 就绪/可信 */
+  --ink-on-spot:#2a0713;   /* 追光上的字（近黑酒红） */
+  --hair:rgba(255,243,238,.09);
+  --hair-2:rgba(255,243,238,.17);
+  --raise:rgba(255,243,238,.07);   /* 极轻的抬起：色片底、熄灭的灯 */
+  --track:rgba(255,243,238,.13);   /* 推子/进度槽的未点亮段 */
+  --scroll:rgba(255,243,238,.11);  /* 滚动条 */
+  --wash-a:rgba(255,79,134,.10);   /* 场地雾：右上粉 */
+  --wash-b:rgba(107,224,214,.05);  /* 场地雾：左下青 */
+  --lift:0 14px 40px rgba(0,0,0,.6);   /* 唯一投影 —— toast */
+
+  --radius:10px;
+  --sans:"Segoe UI Variable Display","Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
+  /* 台体的字：DIN 血统的技术字（Bahnschrift 随 Windows 出厂），中文回落到系统中文 */
+  --display:"Bahnschrift","DIN Alternate","Segoe UI Variable Display",system-ui,"Microsoft YaHei",sans-serif;
+  --mono:"Cascadia Mono","Consolas",ui-monospace,"Courier New",monospace;
+}
+
+/* 场灯亮起 —— 同一台调光台，只是开了场灯。不是反色：底是暖纸，粉照旧是粉。 */
+[data-theme="light"]{
+  color-scheme:light;
+
+  --blackout:#f2efec;      /* 开了场灯的底：暖纸，不是临床白 */
+  --deck:#ffffff;          /* 受光的台体 */
+  --deck-2:#faf7f5;
+  --deck-3:#efeae7;        /* 开灯后「被按亮」= 压得更暗 */
+  --well:#f4f0ee;          /* 凹槽：比台体略深 */
+  --beam:#1c1719;          /* 受光下的正文：暖近黑 */
+  --dim:#5c5458;
+  --dim-2:#756d71;         /* ≥4.5:1 on deck-2 */
+  --spot:#ff4f86;          /* 追光粉不变 —— 品牌承诺 */
+  --spot-2:#d21f5b;        /* 开灯后粉作小字要压深才读得清 */
+  --spot-soft:rgba(210,31,91,.10);
+  --amber:#8f5308;         /* 琥珀压深作字 */
+  --gel:#0e6f66;           /* 滤色青压深作字 */
+  --ink-on-spot:#2a0713;
+  --hair:rgba(28,23,25,.12);
+  --hair-2:rgba(28,23,25,.22);
+  --raise:rgba(28,23,25,.05);
+  --track:rgba(28,23,25,.12);
+  --scroll:rgba(28,23,25,.20);
+  --wash-a:rgba(255,79,134,.07);
+  --wash-b:rgba(14,111,102,.04);
+  --lift:0 12px 32px rgba(28,23,25,.18);
+}
+
+*{box-sizing:border-box}
+
+body{
+  margin:0;overflow-x:hidden;
+  font-family:var(--sans);
+  font-size:14px;
+  color:var(--beam);
+  background:
+    radial-gradient(120% 70% at 62% -12%, var(--wash-a), transparent 62%),
+    radial-gradient(90% 60% at 8% 108%, var(--wash-b), transparent 60%),
+    var(--blackout);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+}
+code{font-family:var(--mono);font-size:.92em;color:var(--amber)}
+
+/* ---------------- 台体骨架 ---------------- */
+
+.app{display:flex;min-height:100vh}
+
+.sidebar{
+  width:216px;flex:0 0 216px;
+  background:linear-gradient(180deg,var(--deck),var(--blackout));
+  border-right:1px solid var(--hair);
+  padding:20px 14px;
+  position:sticky;top:0;height:100vh;
+  display:flex;flex-direction:column;gap:16px;
+}
+.brand{
+  font-family:var(--display);font-size:12.5px;letter-spacing:.2em;
+  color:var(--beam);padding:2px 10px 14px;
+  border-bottom:1px solid var(--hair);
+  display:flex;align-items:center;gap:8px;
+}
+.brand::before{
+  content:"";width:7px;height:7px;border-radius:50%;
+  background:var(--spot);box-shadow:0 0 0 3px var(--spot-soft);
+  flex:0 0 auto;
+}
+
+#nav{display:flex;flex-direction:column;gap:2px;counter-reset:ch}
+
+/* 场灯开关 */
+.theme-toggle{
+  margin-top:auto;display:flex;align-items:center;gap:9px;
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.12em;color:var(--dim);
+  padding:9px 10px;
+}
+.theme-toggle .led{
+  width:8px;height:8px;border-radius:50%;flex:0 0 auto;
+  background:var(--raise);border:1px solid var(--hair-2);transition:background .16s,box-shadow .16s;
+}
+.side-foot{margin-top:auto;display:flex;flex-direction:column;gap:2px}
+.side-foot .theme-toggle{margin-top:0}
+
+/* 作者署名：存在感最低的一档，但找得到 */
+.author{
+  display:flex;flex-direction:column;gap:1px;
+  margin-top:8px;padding:8px 10px 2px;
+  border-top:1px solid var(--hair);
+  font-family:var(--mono);font-size:10.5px;line-height:1.6;
+  color:var(--dim-2);letter-spacing:.02em;word-break:break-all;
+}
+#quit-btn .led{background:var(--spot);border-color:transparent}
+#quit-btn:hover{color:var(--spot-2)}
+#quit-btn:hover .led{box-shadow:0 0 9px 1px var(--spot-soft)}
+[data-theme="light"] .theme-toggle .led{background:var(--spot);border-color:var(--spot);box-shadow:0 0 9px 1px var(--spot-soft)}
+#nav a{
+  counter-increment:ch;
+  display:grid;grid-template-columns:26px 1fr 8px;align-items:center;gap:9px;
+  padding:9px 10px;border-radius:8px;
+  color:var(--dim);font-size:13px;cursor:pointer;
+  border:1px solid transparent;position:relative;
+  transition:background .14s,color .14s,border-color .14s;
+}
+#nav a::before{
+  content:counter(ch,decimal-leading-zero);
+  font-family:var(--mono);font-size:10.5px;color:var(--dim-2);letter-spacing:.06em;
+}
+#nav a::after{
+  content:"";width:7px;height:7px;border-radius:50%;
+  background:var(--raise);justify-self:end;
+  transition:background .14s,box-shadow .14s;
+}
+#nav a:hover{background:rgba(255,243,238,.035);color:var(--beam)}
+#nav a.active{
+  background:linear-gradient(90deg,var(--spot-soft),transparent 70%);
+  color:var(--beam);border-color:var(--hair);
+}
+#nav a.active::before{color:var(--spot-2)}
+#nav a.active::after{background:var(--spot);box-shadow:0 0 9px 1px rgba(255,79,134,.55)}
+
+.main{flex:1;min-width:0;padding:30px 34px 90px;max-width:1180px}
+
+/* ---------------- 页头（Cue 头） ---------------- */
+
+.page{display:none}
+.page.active{display:block}
+
+h2{
+  margin:0 0 6px;font-family:var(--display);font-size:24px;font-weight:600;
+  letter-spacing:.02em;padding-left:16px;position:relative;
+}
+h2::before{
+  content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);
+  width:8px;height:8px;border-radius:50%;
+  background:var(--spot);box-shadow:0 0 10px 1px rgba(255,79,134,.5);
+}
+.hint{color:var(--dim);font-size:12.5px;line-height:1.75;margin:0 0 20px;max-width:min(78ch,100%);overflow-wrap:anywhere}
+
+/* ---------------- 进光板（card） ---------------- */
+
+.card{
+  position:relative;
+  background:var(--deck);
+  border:1px solid var(--hair);
+  border-radius:var(--radius);
+  padding:18px 18px 16px;
+  margin-bottom:14px;
+}
+.card::before{ /* 上沿接光 */
+  content:"";position:absolute;left:14px;right:14px;top:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--hair-2) 22%,var(--hair-2) 78%,transparent);
+}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(168px,1fr));gap:12px;margin-bottom:14px}
+
+.stat{
+  background:linear-gradient(180deg,var(--deck-2),var(--deck));
+  border:1px solid var(--hair);border-radius:var(--radius);padding:14px 15px;
+}
+.stat .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;color:var(--dim-2);text-transform:uppercase}
+.stat .v{font-family:var(--display);font-size:30px;font-weight:600;margin-top:8px;color:var(--beam);line-height:1;letter-spacing:.01em}
+.stat .v.small{font-size:16px;font-weight:500;color:var(--amber);letter-spacing:.04em}
+
+/* ---------------- 表单：通道与凹槽 ---------------- */
+
+label{
+  display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;
+  color:var(--dim-2);margin:14px 0 6px;text-transform:uppercase;
+  overflow-wrap:anywhere;
+}
+label:first-child{margin-top:0}
+
+input[type=text],input[type=number],input[type=password],select,textarea{
+  width:100%;padding:10px 12px;
+  background:var(--well);
+  border:1px solid var(--hair);
+  border-radius:8px;
+  font-family:var(--sans);font-size:13px;color:var(--beam);
+  outline:none;transition:border-color .15s,background .15s,box-shadow .15s;
+}
+input::placeholder,textarea::placeholder{color:var(--dim-2)}
+input[type=text]:focus,input[type=number]:focus,input[type=password]:focus,
+select:focus,textarea:focus{
+  border-color:var(--spot);
+  background:var(--deck);box-shadow:0 0 0 3px var(--spot-soft);
+}
+textarea{resize:vertical;min-height:82px;line-height:1.7}
+select{appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--dim) 50%),linear-gradient(135deg,var(--dim) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 51%,calc(100% - 11px) 51%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:32px;
+}
+.row{display:flex;gap:12px}
+.row>*{flex:1;min-width:0}
+
+input[type=file]{
+  width:100%;padding:10px 12px;border:1px dashed var(--hair-2);border-radius:8px;
+  background:var(--well);font-size:12.5px;color:var(--dim);cursor:pointer;
+}
+input[type=file]::file-selector-button{
+  font-family:var(--mono);font-size:11px;letter-spacing:.08em;
+  margin-right:12px;padding:6px 12px;border-radius:6px;cursor:pointer;
+  border:1px solid var(--hair-2);background:var(--deck-2);color:var(--beam);
+}
+#w-image-preview img{
+  display:block;max-width:230px;max-height:230px;margin-top:12px;
+  border:1px solid var(--hair-2);border-radius:8px;
+}
+#w-exif{margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--amber);letter-spacing:.02em}
+
+/* ---------------- 按钮：台面上的按键 ---------------- */
+
+button{
+  font-family:var(--sans);font-size:13px;font-weight:500;
+  padding:9px 16px;border-radius:9px;
+  border:1px solid var(--hair-2);
+  background:var(--deck-2);
+  color:var(--beam);cursor:pointer;
+  transition:background .14s,border-color .14s,color .14s,transform .06s;
+}
+button:hover{background:var(--deck-3)}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.45;cursor:not-allowed;transform:none}
+button:focus-visible{outline:2px solid var(--spot-2);outline-offset:2px}
+
+/* 主按钮：樱花粉。用户要求「简单一点、淡粉」—— 所以去掉了渐变，用干净的平色 */
+button.primary{
+  background:var(--sakura);
+  border-color:var(--sakura-lo);
+  color:var(--on-sakura);
+  font-weight:700;
+}
+button.primary:hover{background:var(--sakura-hi)}
+button.primary:active{background:var(--sakura-lo);transform:translateY(1px)}
+
+button.ghost{background:transparent}
+button.ghost:hover{background:var(--raise)}
+button.tiny{padding:5px 11px;font-size:12px;border-radius:6px}
+button.danger{color:var(--amber);border-color:rgba(255,177,94,.35)}
+button.danger:hover{background:rgba(255,177,94,.1)}
+.actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;align-items:center}
+
+/* ---------------- 开关：台体上的翘板 ---------------- */
+
+.switch{display:flex;align-items:center;gap:11px;margin-top:8px}
+.switch input[type=checkbox]{appearance:none;width:40px;height:22px;flex:0 0 auto;
+  border-radius:12px;border:1px solid var(--hair-2);background:var(--well);
+  position:relative;cursor:pointer;transition:background .16s,border-color .16s}
+.switch input[type=checkbox]::after{
+  content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+  background:var(--dim);transition:transform .16s,background .16s;
+}
+.switch input[type=checkbox]:checked{background:var(--spot-soft);border-color:var(--spot)}
+.switch input[type=checkbox]:checked::after{transform:translateX(18px);background:var(--spot)}
+.switch .desc{margin:0}
+
+/* ---------------- 列表：Cue 表 ---------------- */
+
+.list{display:flex;flex-direction:column;gap:8px;counter-reset:cue}
+.item{
+  display:grid;grid-template-columns:auto 1fr auto;gap:13px;align-items:flex-start;
+  background:var(--deck-2);border:1px solid var(--hair);
+  border-radius:9px;padding:12px 14px;
+  counter-increment:cue;transition:border-color .14s,background .14s;
+}
+.item:hover{background:var(--deck-3);border-color:var(--hair-2)}
+.item:hover::before{color:var(--spot-2)}
+.item::before{content:counter(cue,decimal-leading-zero);
+  font-family:var(--mono);font-size:10.5px;color:var(--dim-2);padding-top:2px}
+.item .body{flex:1;min-width:0}
+.item .title{font-weight:600;margin-bottom:4px;word-break:break-word;color:var(--beam)}
+.item .desc{color:var(--dim);font-size:12.5px;line-height:1.7;word-break:break-word}
+.item .meta{color:var(--dim-2);font-size:11px;margin-top:7px;display:flex;gap:9px;flex-wrap:wrap;align-items:center;font-family:var(--mono);letter-spacing:.02em}
+.item .ops{display:flex;gap:6px;flex:0 0 auto;flex-wrap:wrap;justify-content:flex-end}
+
+/* ---------------- 标签：色片 ---------------- */
+
+.tag{
+  display:inline-block;padding:2px 9px;border-radius:5px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.05em;
+  background:var(--raise);color:var(--dim);
+}
+.tag.likely{background:rgba(107,224,214,.14);color:var(--gel)}
+.tag.maybe,.tag.pending{background:rgba(255,177,94,.15);color:var(--amber)}
+.tag.accent{background:var(--spot-soft);color:var(--spot-2)}
+
+.empty{color:var(--dim-2);font-size:13px;padding:26px;text-align:center;
+  border:1px dashed var(--hair);border-radius:9px;font-family:var(--mono);letter-spacing:.04em}
+
+/* ---------------- 舞台（结果区） ---------------- */
+
+.console{display:grid;grid-template-columns:236px minmax(0,1fr) 288px;gap:16px;align-items:start}
+@media(max-width:1180px){.console{grid-template-columns:236px minmax(0,1fr)}}
+@media(max-width:900px){.console{grid-template-columns:minmax(0,1fr)}}
+
+.prep{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-top:16px}
+@media(max-width:900px){.prep{grid-template-columns:minmax(0,1fr)}}
+
+/* 舞台：一束真的光打下来 */
+.stage{position:relative;isolation:isolate;min-height:330px}
+.stage::before{
+  content:"";position:absolute;left:-16%;right:-16%;top:-18%;height:80%;z-index:-1;pointer-events:none;
+  background:
+    radial-gradient(46% 96% at 50% -6%,color-mix(in srgb,var(--spot) 30%,transparent),color-mix(in srgb,var(--spot) 10%,transparent) 42%,transparent 74%),
+    linear-gradient(180deg,color-mix(in srgb,var(--spot) 5%,transparent),transparent 42%);
+  filter:blur(2px);
+}
+.stage::after{ /* 顶部灯位的光晕 */
+  content:"";position:absolute;left:50%;top:-30px;transform:translateX(-50%);
+  width:130px;height:28px;z-index:-1;pointer-events:none;
+  background:radial-gradient(50% 100% at 50% 100%,color-mix(in srgb,var(--spot) 50%,transparent),transparent 70%);
+}
+
+.stage-empty{
+  border:1px dashed color-mix(in srgb,var(--spot) 34%,transparent);border-radius:var(--radius);
+  padding:54px 22px;text-align:center;color:var(--dim);
+  font-family:var(--mono);font-size:12.5px;letter-spacing:.07em;line-height:2.1;
+}
+
+.presets{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.presets button{padding:5px 11px;font-size:12px;font-family:var(--mono);letter-spacing:.04em;border-radius:6px;color:var(--dim)}
+.presets button:hover{color:var(--beam)}
+
+.readout{
+  display:flex;flex-wrap:wrap;gap:12px 26px;align-items:center;
+  padding:15px 17px;border:1px solid var(--hair);border-radius:var(--radius);
+  background:linear-gradient(180deg,var(--deck-2),var(--deck));
+  font-family:var(--mono);font-size:12px;letter-spacing:.04em;color:var(--dim);margin-bottom:14px;
+}
+.readout b{font-family:var(--display);font-size:20px;font-weight:600;color:var(--beam);margin-left:7px}
+
+.result{
+  position:relative;padding:18px;border-radius:var(--radius);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--spot) 10%,transparent),color-mix(in srgb,var(--spot) 3%,transparent));
+  border:1px solid color-mix(in srgb,var(--spot) 28%,transparent);
+}
+.result::before{content:"";position:absolute;left:16px;right:16px;top:-1px;height:1px;
+  background:linear-gradient(90deg,transparent,var(--spot) 30%,var(--spot) 70%,transparent)}
+.result .used{color:var(--dim);font-size:11px;margin-top:10px;line-height:1.8;
+  font-family:var(--mono);letter-spacing:.02em}
+
+/* ---------------- 光束进度 ---------------- */
+
+.beam{height:3px;border-radius:2px;background:var(--raise);overflow:hidden;position:relative;margin-top:12px}
+.beam.on::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,var(--spot),transparent);
+  animation:sweep 1.05s linear infinite}
+@keyframes sweep{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+
+/* ---------------- 推子 ---------------- */
+
+.fader{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;margin-top:6px}
+.fader input[type=range]{-webkit-appearance:none;appearance:none;width:100%;min-width:0;height:4px;border-radius:2px;
+  background:linear-gradient(90deg,var(--spot) var(--v,70%),var(--track) var(--v,70%));cursor:pointer;outline:none}
+.fader input[type=range]::-webkit-slider-thumb{
+  -webkit-appearance:none;width:15px;height:27px;border-radius:3px;
+  background:var(--beam);border:1px solid var(--blackout);
+  box-shadow:0 0 0 1px var(--hair-2),var(--lift);cursor:grab}
+.fader .val{font-family:var(--mono);font-size:12.5px;color:var(--amber);min-width:2.6em;text-align:right}
+
+/* ---------------- toast ---------------- */
+
+.toast{
+  position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(16px);
+  background:var(--deck-2);color:var(--beam);
+  border:1px solid var(--hair-2);
+  padding:11px 20px;border-radius:8px;font-size:13px;
+  opacity:0;pointer-events:none;transition:.22s;max-width:74vw;
+  box-shadow:var(--lift);
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-thumb{background:var(--scroll);border-radius:6px;border:3px solid var(--blackout)}
+::-webkit-scrollbar-thumb:hover{background:var(--hair-2)}
+::selection{background:var(--spot);color:var(--ink-on-spot)}
+
+/* ---------------- 窄屏：调光台横过来 ---------------- */
+
+@media(max-width:820px){
+  .app{flex-direction:column}
+  .sidebar{
+    width:auto;flex:none;height:auto;position:static;
+    flex-direction:row;align-items:center;gap:10px;
+    padding:11px 14px;overflow-x:auto;
+    border-right:0;border-bottom:1px solid var(--hair);
+  }
+  .brand{border-bottom:0;padding:0 12px 0 0;border-right:1px solid var(--hair);flex:0 0 auto}
+  #nav{flex-direction:row;gap:4px}
+  #nav a{grid-template-columns:auto auto;gap:7px;white-space:nowrap;padding:7px 10px}
+  #nav a::after{display:none}
+  .main{padding:20px 16px 70px}
+  .row{flex-direction:column;gap:0}
+  .fader{grid-template-columns:1fr;gap:5px}
+  .fader .val{text-align:left}
+}
+
+/* ---------------- 超话候选列表：前 5 可见，其余滚动 ---------------- */
+
+#q-cid-list{
+  max-height:330px;overflow-y:auto;padding-right:6px;
+  border:1px solid var(--hair);border-radius:10px;background:var(--deck-2);
+}
+#q-cid-list .item{background:transparent;border:0;border-bottom:1px solid var(--hair);border-radius:0}
+#q-cid-list .item:last-child{border-bottom:0}
+
+/* ---------------- 微博状态条：登录了谁 / 选了哪个超话，要一眼看到 ---------------- */
+
+.wb-status{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:11px 13px;border-radius:10px;margin:8px 0;
+  border:1px solid var(--hair);background:var(--deck-2);
+}
+.wb-status .led{
+  width:9px;height:9px;border-radius:50%;flex:0 0 auto;
+  background:var(--track);box-shadow:0 0 0 3px var(--raise);
+}
+.wb-status .who{
+  font-family:var(--display);font-size:16px;font-weight:600;
+  color:var(--beam);letter-spacing:.2px;
+}
+.wb-status .sub{
+  font-family:var(--mono);font-size:12px;color:var(--dim-2);
+  margin-left:auto;white-space:nowrap;
+}
+.wb-status .ops2{margin-left:auto;display:flex;gap:6px}
+.wb-status.on{border-color:var(--hair-2)}
+.wb-status.on .led{
+  background:var(--gel);
+  box-shadow:0 0 0 3px rgba(107,224,214,.16),0 0 10px var(--gel);
+}
+.wb-status.on .who{color:var(--spot-2)}
+.wb-status.warn .led{background:var(--amber);box-shadow:0 0 0 3px rgba(255,177,94,.16)}
+.wb-status.warn .who{color:var(--amber)}
+
+/* ---------------- 多图预览缩略图 ---------------- */
+
+#w-image-preview{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+#w-image-preview img{
+  width:64px;height:64px;object-fit:cover;
+  border-radius:6px;border:1px solid var(--hair);
+}
+
+/* ---------------- 文案正文：保住换行 ---------------- */
+
+/* HTML 默认会把换行折叠成空格 —— 文案的排版（分行、空行）是本人的写法，要照原样显示 */
+.cap-text{white-space:pre-wrap;word-break:break-word}
+
+/* ---------------- 不确定进度条（不知何时结束的长任务） ---------------- */
+
+.bar.indet>i{width:36%;animation:barSlide 1.15s ease-in-out infinite}
+@keyframes barSlide{
+  0%{transform:translateX(-100%)}
+  100%{transform:translateX(280%)}
+}
+
+/* ---------------- 页内切换（未确认 / 已确认） ---------------- */
+
+.tabs{display:flex;gap:4px;background:var(--well);border:1px solid var(--hair);
+  border-radius:9px;padding:3px}
+.tabs .tab{
+  font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--dim);
+  padding:6px 12px;border-radius:6px;background:transparent;border:0;cursor:pointer;
+  transition:background .14s,color .14s;
+}
+.tabs .tab b{font-family:var(--display);font-size:12px;margin-left:4px;color:var(--dim-2)}
+.tabs .tab:hover{color:var(--beam)}
+.tabs .tab.active{background:var(--deck-3);color:var(--beam)}
+.tabs .tab.active b{color:var(--spot-2)}
+
+/* ---------------- 进度条（导入） ---------------- */
+
+.bar{height:8px;border-radius:5px;background:var(--track);overflow:hidden;margin:10px 0 6px}
+.bar>i{
+  display:block;height:100%;border-radius:5px;background:var(--spot);
+  box-shadow:0 0 10px var(--spot-soft);transition:width .4s ease;
+}
+
+/* ---------------- 关闭选择框 ---------------- */
+
+.modal-mask{
+  position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.55);backdrop-filter:blur(2px);
+}
+.modal{
+  width:min(440px,92vw);background:var(--deck);border:1px solid var(--hair-2);
+  border-radius:12px;padding:18px 20px;box-shadow:var(--lift);
+}
+.modal-title{font-family:var(--display);font-size:16px;font-weight:600;color:var(--beam)}
+.modal-body{color:var(--dim);font-size:13px;line-height:1.75;margin-top:9px}
+
+/* ---------------- 页面标题行（标题 + 右侧操作） ---------------- */
+
+.pagehead{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.pagehead h2{margin:0}
+
+/* ---------------- 事件全文展开 / 词典行 ---------------- */
+
+.item .title.clickable{cursor:pointer}
+.item .toggle{margin-left:6px;font-family:var(--mono);font-size:11px;color:var(--dim-2)}
+.item.open .toggle{color:var(--spot-2)}
+.item .full{
+  margin-top:8px;padding:9px 11px;border-radius:8px;
+  background:var(--well);border:1px solid var(--hair);
+  white-space:pre-wrap;word-break:break-word;
+  color:var(--beam);font-size:13px;line-height:1.6;
+}
+.item.flash{border-color:var(--spot);box-shadow:0 0 0 1px var(--spot-soft),0 0 18px var(--spot-soft)}
+/* 速览 / 问题项：状态用「点亮的通道号」表达，不用左侧粗色条（那是 AI 味） */
+.item.digest::before{color:var(--spot)}
+.item.warn::before{color:var(--amber)}
+.item.warn .title{color:var(--amber)}
+
+

@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>微博超话助手</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">微博超话助手</div>
+    <nav id="nav">
+      <a data-page="dashboard" class="active">概览</a>
+      <a data-page="write">写文案</a>
+      <a data-page="captions">文案库</a>
+      <a data-page="style">风格档案</a>
+      <a data-page="terms">术语</a>
+      <a data-page="events">事件</a>
+      <a data-page="push">推送</a>
+      <a data-page="settings">设置</a>
+    </nav>
+    <div class="side-foot">
+      <button id="theme-btn" class="theme-toggle" onclick="toggleTheme()" title="切换：黑场（熄灯）/ 场灯（亮灯）">
+        <span class="led"></span><span id="theme-label">黑场</span>
+      </button>
+      <div class="author">
+        <span>author：小珩</span>
+        <span>微博：小珩Zorya</span>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+
+    <!-- ============ 概览 ============ -->
+    <section id="page-dashboard" class="page active">
+      <h2>概览</h2>
+      <p class="hint">一眼看清当前状态。关掉窗口会最小化到托盘，定时任务继续跑。</p>
+      <div class="readout" id="dash-status"></div>
+      <div class="card">
+        <label>待办 Cue</label>
+        <div class="list" id="dash-todo"></div>
+      </div>
+      <div class="card">
+        <div class="desc" id="dash-model">模型状态检测中…</div>
+        <div class="actions">
+          <button class="primary" onclick="go('write')">去写文案</button>
+          <button onclick="go('terms')">术语</button>
+          <button onclick="api('/api/push/test',{method:'POST'}).then(r=>toast(r.ok?'已发测试推送':'推送失败：'+(r.error||'未知原因')))">测试推送</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 写文案 ============ -->
+    <section id="page-write" class="page">
+      <h2>写文案</h2>
+      <p class="hint">模型是灯，你是灯控。左边调参数，中间舞台接光。会从术语词典、事件库自动检索可联想的梗与事件，并从文案库取风格样本一起注入。生成的是草稿，发出前自己顺一遍。</p>
+
+      <div class="console">
+        <!-- 左：参数推子通道 -->
+        <div class="strip">
+          <div class="card">
+            <label>拍摄对象</label>
+            <input type="text" id="w-target" placeholder="例如：某艺人 / 某场演唱会的他">
+            <label>图频类型</label>
+            <input type="text" id="w-media" value="图">
+            <label>氛围 / 情绪</label>
+            <input type="text" id="w-mood" placeholder="例如：温柔、又飒又想笑">
+            <div class="presets">
+              <button type="button" onclick="presetMood('温柔')">温柔</button>
+              <button type="button" onclick="presetMood('又飒又想笑')">飒</button>
+              <button type="button" onclick="presetMood('安静')">安静</button>
+              <button type="button" onclick="presetMood('搞怪')">搞怪</button>
+              <button type="button" onclick="presetMood('热烈')">热烈</button>
+            </div>
+            <label>想表达的要点</label>
+            <textarea id="w-points" placeholder="想到什么写什么，模型据此发挥"
+                      oninput="onPointsInput()"></textarea>
+            <div class="desc" id="w-term-hint"></div>
+
+            <label>温度 · 越热越放开</label>
+            <div class="fader">
+              <input type="range" id="w-temp" min="0.3" max="1.3" step="0.05" value="0.9" oninput="onTemp()">
+              <span class="val" id="w-temp-val">0.90</span>
+            </div>
+            <div class="desc" id="w-temp-desc"></div>
+
+            <label>长度 · 大约多少<u>字</u></label>
+            <div class="fader">
+              <input type="range" id="w-len" min="10" max="200" step="5" value="60" oninput="onLen()">
+              <span class="val" id="w-len-val">60 字</span>
+            </div>
+
+            <div class="actions">
+              <button class="primary" id="w-gen" onclick="genCaption()">上光 · 生成文案</button>
+            </div>
+            <div class="desc" id="w-busy-hint"></div>
+            <div class="beam" id="w-beam"></div>
+          </div>
+        </div>
+
+        <!-- 中：舞台 -->
+        <div class="stage">
+          <div class="stage-empty" id="w-stage-empty">舞台空着<br>调好左边的参数，按「上光」；这束追光会落在本版文案上</div>
+          <div class="result" id="w-result-box" style="display:none">
+            <label>本版文案（可编辑）</label>
+            <textarea id="w-result"></textarea>
+            <div class="actions">
+              <button class="primary" onclick="saveGenerated()">存入文案库</button>
+              <button onclick="copyResult()">复制</button>
+            </div>
+            <div class="used" id="w-used"></div>
+          </div>
+        </div>
+
+        <!-- 右：Cue 列表 -->
+        <div class="cues">
+          <div class="card">
+            <label>Cue 库 · 可联想的梗与事件</label>
+            <div class="list" id="w-cues"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 准备：模板与照片（不占第一屏） -->
+      <div class="prep">
+        <div class="card">
+          <label>预提示词模板</label>
+          <select id="w-template" onchange="onTemplateChange()"></select>
+          <label>模板内容（占位符：{target} {media_type} {mood} {points}）</label>
+          <textarea id="w-tpl-content" style="min-height:120px"></textarea>
+          <div class="actions">
+            <button onclick="saveTemplate()">保存到当前模板</button>
+            <button onclick="saveTemplateAs()">另存为新模板</button>
+            <button class="tiny" onclick="insertStylePlaceholder()">插入风格档案 {style}</button>
+            <button class="danger tiny" onclick="deleteTemplate()">删除该模板</button>
+          </div>
+          <div class="desc">在模板里写 <code>{style}</code>，生成时就会在那个位置展开成「风格档案」；
+            不写的话系统会自动附在最后（效果一样，只是位置不同）。</div>
+        </div>
+        <div class="card">
+          <label>照片（可选，<b>可多选</b>：先「识图」得到画面描述，再上光）</label>
+          <input type="file" id="w-image" accept="image/*" multiple onchange="onPickImage()">
+          <div id="w-image-preview" hidden></div>
+          <div class="desc" id="w-exif"></div>
+          <div class="actions">
+            <button id="w-vision-btn" onclick="describeImage()">识图</button>
+            <button class="tiny ghost" onclick="clearImage()">清空照片</button>
+          </div>
+          <label>照片描述（多张会合并成一段；可编辑，生成时作为参考注入）</label>
+          <textarea id="w-desc" placeholder="点「识图」自动生成，也可以自己写或改写"></textarea>
+          <label>参考某首歌的文案（<b>只作参考</b>，不参与风格）</label>
+          <select id="w-ref-song"><option value="">（不参考歌曲）</option></select>
+          <div class="desc">想写和某首歌相关的一组图时，选那首歌 —— 它相关的文案会作为参考注入，
+            帮你理解那首歌的语境；不会污染通用语气。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 文案库（未确认 / 已确认） ============ -->
+    <section id="page-captions" class="page">
+      <div class="pagehead">
+        <h2>文案库</h2>
+        <div class="tabs">
+          <button id="tab-c-pending" class="tab active" onclick="showCaptionTab('pending')">
+            未确认 <b id="tab-c-pending-n">0</b></button>
+          <button id="tab-c-done" class="tab" onclick="showCaptionTab('confirmed')">
+            已确认 <b id="tab-c-done-n">0</b></button>
+        </div>
+      </div>
+      <p class="hint">「已确认」的才是风格来源 —— 写文案时只取这部分。从微博导入的先落「未确认」，你核对后再确认。</p>
+
+      <div class="card">
+        <label>从微博导入（抓某人在某超话发过的帖子）</label>
+        <div class="desc">需要先在「推送」页扫码登录。只收<b>本人原创</b>，纯转发/水贴会跳过；按 mid 去重，重复导入不会重复。
+          <b>导入的先落「未确认」</b>，你确认后才进「已确认」。</div>
+        <div class="row">
+          <div>
+            <label>用户（昵称 / uid / 主页链接）</label>
+            <input type="text" id="c-imp-user">
+          </div>
+          <div>
+            <label>存进文案库的类型</label>
+            <input type="text" id="c-imp-type" value="返图" placeholder="返图 / 控评 / 安利 …">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>从（起始日期）</label>
+            <input type="date" id="c-imp-from">
+          </div>
+          <div>
+            <label>到（截止日期，含当天）</label>
+            <input type="date" id="c-imp-to">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>超话 containerid（留空＝不限超话）</label>
+            <input type="text" id="c-imp-cid" placeholder="留空就抓 TA 的全部原创">
+          </div>
+          <div>
+            <label>每 20 页休息（<u>秒</u>）</label>
+            <input type="number" id="c-imp-cooldown" value="10" min="0" max="600" placeholder="10">
+          </div>
+        </div>
+        <div class="desc">后台跑：每翻 20 页休息一下再继续，一直翻到扫完上面的日期范围。
+          休息填 <b>0</b> ＝ 完全不额外休息，只靠每请求 1~2.5 秒的间隔控节奏。</div>
+        <div class="actions">
+          <button class="primary" onclick="importCaptions()">开始导入</button>
+          <button onclick="resolveUser()">查用户</button>
+          <button onclick="scanTopics()">扫描 TA 发过的超话</button>
+          <button class="tiny ghost" onclick="useCurrentChaohua()">填入当前超话</button>
+          <button class="tiny ghost" onclick="setRecentRange(180)">最近半年</button>
+        </div>
+        <div id="c-imp-progress" hidden>
+          <div class="bar"><i id="c-imp-bar" style="width:0%"></i></div>
+          <div class="desc" id="c-imp-progress-text"></div>
+        </div>
+        <div class="actions" id="c-imp-stop-wrap" hidden>
+          <button class="danger" onclick="stopImport()">停止导入</button>
+        </div>
+        <div class="desc" id="c-imp-status"></div>
+        <div class="list" id="c-imp-picks"></div>
+      </div>
+
+      <div class="card">
+        <label>单条添加（直接进「已确认」）</label>
+        <textarea id="c-one" placeholder="一条文案"></textarea>
+        <div class="row">
+          <div><label>标签</label><input type="text" id="c-tags" placeholder="逗号分隔"></div>
+          <div><label>类型</label><input type="text" id="c-type" value="返图"></div>
+        </div>
+        <div class="actions"><button onclick="addCaption()">添加</button></div>
+      </div>
+
+      <div class="actions">
+        <button class="tiny primary" id="c-act-confirm" onclick="confirmAllCaptions()">一键确认全部</button>
+        <button class="tiny danger" onclick="deleteCaptionsInTab()">一键删除本页全部</button>
+        <button class="tiny ghost" onclick="loadCaptions()">刷新</button>
+        <div class="desc" id="c-count" style="margin-left:auto"></div>
+      </div>
+      <div class="list" id="c-list"></div>
+    </section>
+
+    <!-- ============ 风格档案 ============ -->
+    <section id="page-style" class="page">
+      <h2>风格档案</h2>
+      <p class="hint">让模型读<b>全部</b>文案，把你的「说话规律」写成一份说明书；每次写文案都会注入它。加了新文案后点「重新生成」即可更新。</p>
+      <div class="card">
+        <div class="actions">
+          <button class="primary" onclick="genStyle()">用本地模型重新生成</button>
+          <button onclick="saveStyle()">保存修改</button>
+          <button onclick="copyCaptions()">复制全部文案</button>
+        </div>
+        <div class="desc" id="st-status"></div>
+        <div id="st-progress" hidden>
+          <div class="bar indet"><i></i></div>
+          <div class="desc">本地模型正在通读全部文案并提炼规律，可能要几十秒到几分钟…</div>
+        </div>
+        <textarea id="st-profile" style="min-height:340px"
+                  placeholder="（还没有风格档案）点上面「重新生成」，或手动粘贴一份"></textarea>
+        <div class="desc">💡 本地 7B 提炼的档案偏弱。<b>更省事的做法</b>：点「复制全部文案」→ 粘给云端强模型（ChatGPT / Claude）→ 让它提炼「句式 / 标点习惯 / 高频词 / 语气 / 长度 / 禁忌」→ 粘回上面的框 → 保存。</div>
+      </div>
+      <div class="card">
+        <label>每次注入几条风格样本</label>
+        <input type="number" id="st-samples" min="1" max="40">
+        <div class="desc">配合上面的档案一起注入。样本按关键词检索（同类型加权）挑，越多越慢。</div>
+        <div class="actions"><button onclick="saveStyleSamples()">保存</button></div>
+      </div>
+    </section>
+
+    <!-- ============ 术语（未确认 / 已确认） ============ -->
+    <section id="page-terms" class="page">
+      <div class="pagehead">
+        <h2>术语</h2>
+        <div class="tabs">
+          <button id="tab-t-pending" class="tab active" onclick="showTermTab('pending')">
+            未确认 <b id="tab-t-pending-n">0</b></button>
+          <button id="tab-t-done" class="tab" onclick="showTermTab('done')">
+            已确认 <b id="tab-t-done-n">0</b></button>
+        </div>
+      </div>
+      <p class="hint">知识核心：词条 = 术语 + 释义。这是写文案时「懂梗」的唯一保证来源。</p>
+
+      <!-- —— 未确认：填写页 —— -->
+      <div id="t-pane-pending">
+        <div class="card">
+          <label>手动录入词条</label>
+          <div class="row">
+            <div><input type="text" id="t-term" placeholder="术语，如：面包"></div>
+            <div><label>类型</label>
+              <select id="t-type">
+                <option>黑话</option><option>绰号</option><option>应援</option><option>事件指代</option>
+              </select>
+            </div>
+          </div>
+          <label>释义</label>
+          <textarea id="t-meaning" placeholder="一句话说清这个词在圈里指什么"></textarea>
+          <div class="actions">
+            <button class="primary" onclick="addTerm()">确认入库</button>
+            <button class="tiny ghost" onclick="cancelEditTerm()">清空</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="desc">候选从哪来：<b>从文案库抽</b>（jieba 分词 + 模型筛）或 <b>从超话帖抽</b>（模型识别）。
+            机器只提候选，含义你来定。</div>
+          <div class="actions">
+            <button onclick="fetchCandidates()">从文案库抽候选词</button>
+            <button onclick="extractTermsFromPosts()">从超话帖抽术语</button>
+            <button class="tiny ghost" onclick="loadPendingTerms()">刷新</button>
+            <button class="tiny danger" onclick="deleteAllCandidates()">一键删除全部未确认</button>
+          </div>
+          <div class="desc" id="t-pending-hint"></div>
+        </div>
+        <div class="list" id="t-pending"></div>
+      </div>
+
+      <!-- —— 已确认：查看 / 就地改 —— -->
+      <div id="t-pane-done" hidden>
+        <div class="card">
+          <div class="row">
+            <div><input type="text" id="dt-search" placeholder="搜索词或释义" oninput="loadTerms()"></div>
+            <div>
+              <select id="dt-type" onchange="loadTerms()">
+                <option value="">全部类型</option>
+                <option>黑话</option><option>绰号</option><option>应援</option><option>事件指代</option>
+              </select>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="tiny ghost" onclick="loadTerms()">刷新</button>
+            <button class="tiny danger" onclick="deleteAllTerms()">一键删除全部词条</button>
+          </div>
+          <div class="desc" id="dt-count"></div>
+        </div>
+        <div class="list" id="dt-list"></div>
+      </div>
+    </section>
+
+    <!-- ============ 事件（未确认 / 已确认） ============ -->
+    <section id="page-events" class="page">
+      <div class="pagehead">
+        <h2>事件</h2>
+        <div class="tabs">
+          <button id="tab-e-pending" class="tab active" onclick="showEventTab('pending')">
+            未确认 <b id="tab-e-pending-n">0</b></button>
+          <button id="tab-e-done" class="tab" onclick="showEventTab('confirmed')">
+            已确认 <b id="tab-e-done-n">0</b></button>
+        </div>
+      </div>
+      <p class="hint">每条帖子是一条事件（点标题展开全文）；「📋 速览」把整批内容压成要点，推送推的就是它。</p>
+      <div class="card">
+        <div class="row">
+          <div><input type="text" id="e-search" placeholder="搜索标题 / 内容 / 人物 / 梗"
+                      oninput="debouncedLoadEvents()"></div>
+          <div>
+            <select id="e-f-source" onchange="loadEvents(0)">
+              <option value="">全部来源</option>
+              <option value="digest">速览</option>
+              <option value="post">帖子</option>
+              <option value="manual">手动</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="tiny primary" id="e-act-confirm" onclick="confirmAllEvents()">一键确认全部</button>
+          <button class="tiny danger" onclick="deleteEventsInTab()">一键删除本页全部</button>
+          <button class="tiny ghost" onclick="loadEvents(0)">刷新</button>
+        </div>
+        <div class="desc" id="e-count"></div>
+      </div>
+      <div class="card">
+        <label>手动新增事件</label>
+        <input type="text" id="e-title" placeholder="事件标题">
+        <div class="row">
+          <div><label>时间</label><input type="text" id="e-date" placeholder="如 2026-09-12"></div>
+          <div><label>涉及的人</label><input type="text" id="e-people" placeholder="逗号分隔"></div>
+        </div>
+        <label>说明</label>
+        <textarea id="e-desc"></textarea>
+        <label>相关梗 / 词</label>
+        <input type="text" id="e-terms" placeholder="逗号分隔">
+        <div class="actions"><button class="primary" onclick="addEvent()">保存事件</button></div>
+      </div>
+      <div class="list" id="e-list"></div>
+      <div class="actions" id="e-more-wrap" hidden style="margin-top:12px">
+        <button onclick="loadEventsMore()">加载更多</button>
+      </div>
+    </section>
+
+    <!-- ============ 推送 ============ -->
+    <section id="page-push" class="page">
+      <h2>推送</h2>
+      <p class="hint">桌面弹窗。有新事件时按设定间隔推送（只推上次之后新增的，不重复）。总结的数据源是下面粘贴的原始帖（阶段二会换成自动抓取）。</p>
+      <div class="card">
+        <label>扫码登录微博（自动获取 cookie）</label>
+        <div class="desc">⚠️ 用<b>小号</b>扫码。登录成功会自动把 cookie 存进「设置 · 超话抓取」，<b>长期有效，不用每次重扫</b>。</div>
+        <div class="wb-status" id="q-login-status"></div>
+        <div class="wb-status" id="q-current"></div>
+        <div class="actions">
+          <button id="q-btn" onclick="qrStart()">扫码登录</button>
+          <button class="tiny ghost" onclick="qrCheckLogin()">刷新登录态</button>
+          <button class="tiny ghost" onclick="qrForget()">清除已存 cookie</button>
+        </div>
+        <div id="q-box" hidden>
+          <div id="q-img"></div>
+          <div class="desc" id="q-status"></div>
+        </div>
+        <div id="q-cid" hidden>
+          <label>按名称找超话 containerid</label>
+          <input type="text" id="q-kw" placeholder="超话名称，如：王一博">
+          <div class="actions"><button onclick="findCid()">查找 containerid</button></div>
+          <div class="desc" id="q-cid-status"></div>
+          <div class="list" id="q-cid-list"></div>
+        </div>
+      </div>
+      <div class="card">
+        <label>超话新帖 · 抓取与总结</label>
+        <div class="desc">按当前「设置 · 超话抓取」里的配置抓一次；抓到新帖会自动总结（每帖一条事件 + 一条速览）。</div>
+        <div class="actions">
+          <button class="primary" id="p-fetch-btn" onclick="fetchNow()">抓取超话新帖</button>
+          <button onclick="runJob('summarize')">立即总结未处理帖</button>
+          <button onclick="runJob('push')">立即检查推送</button>
+        </div>
+        <div class="desc" id="p-fetch-status"></div>
+        <div class="desc" id="p-posts-count"></div>
+        <label>手动粘贴超话帖（每行一条，作为备用数据源）</label>
+        <textarea id="p-posts" placeholder="直接粘贴超话里的帖子，一行一条"></textarea>
+        <div class="actions"><button onclick="ingestPosts()">存入原始帖</button></div>
+      </div>
+      <div class="card">
+        <div class="actions">
+          <button onclick="api('/api/push/test',{method:'POST'}).then(r=>{toast(r.ok?'已发测试推送':'推送失败：'+(r.error||'未知原因'));loadPushLog()})">发送测试推送</button>
+        </div>
+      </div>
+      <div class="card">
+        <label>推送日志</label>
+        <div class="list" id="p-log"></div>
+      </div>
+    </section>
+
+    <!-- ============ 设置 ============ -->
+    <section id="page-settings" class="page">
+      <h2>设置</h2>
+      <p class="hint">模型、识图、超话抓取、推送频率、总结频率、开机自启。</p>
+
+      <div class="card">
+        <label>Ollama 地址</label>
+        <input type="text" id="s-url">
+        <label>模型</label>
+        <input type="text" id="s-model" placeholder="qwen2.5:7b-instruct">
+        <select id="s-model-sel" onchange="pickModel()">
+          <option value="">（点「检测模型」拉取已装模型列表）</option>
+        </select>
+        <div class="actions">
+          <button onclick="saveSettings(['ollama_url','model'])">保存</button>
+          <button onclick="checkModel()">检测模型</button>
+        </div>
+        <div class="desc" id="s-model-status"></div>
+      </div>
+
+      <div class="card">
+        <label>识图中转站（OpenAI 兼容，含 /v1）</label>
+        <input type="text" id="s-vision-url" placeholder="https://你的中转站/v1">
+        <label>API Key</label>
+        <input type="password" id="s-vision-key" placeholder="sk-...">
+        <div class="row">
+          <div>
+            <label>识图模型</label>
+            <input type="text" id="s-vision-model" placeholder="从列表选，或自己填">
+          </div>
+          <div>
+            <label>从模型列表选择</label>
+            <select id="s-vision-model-sel" onchange="pickVisionModel()">
+              <option value="">（先点「拉取模型列表」）</option>
+            </select>
+          </div>
+        </div>
+        <div class="actions">
+          <button onclick="saveVisionSettings()">保存识图设置</button>
+          <button onclick="pullVisionModels()">拉取模型列表</button>
+        </div>
+        <div class="desc" id="s-vision-status"></div>
+        <div class="switch">
+          <input type="checkbox" id="s-vision-enabled">
+          <span class="desc">开启识图（照片会上传到该中转站，请勿用隐私照片）</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>桌面推送</label>
+        <div class="switch">
+          <input type="checkbox" id="s-push-enabled">
+          <span class="desc">开启桌面弹窗推送</span>
+        </div>
+        <label>推送刷新间隔（分钟）</label>
+        <input type="number" id="s-push-interval" min="1">
+      </div>
+
+      <div class="card">
+        <label>自动总结事件</label>
+        <div class="switch">
+          <input type="checkbox" id="s-sum-enabled">
+          <span class="desc">定时把未处理帖归纳为候选事件</span>
+        </div>
+        <label>总结频率（分钟）</label>
+        <input type="number" id="s-sum-interval" min="1">
+        <div class="switch">
+          <input type="checkbox" id="s-ai-terms">
+          <span class="desc">AI 自动识别术语：总结帖子时顺带抽出可能的圈内术语，放到术语词典待确认</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>开机自启</label>
+        <div class="switch">
+          <input type="checkbox" id="s-autostart">
+          <span class="desc">在启动文件夹创建快捷方式</span>
+        </div>
+        <label>点窗口 × 时</label>
+        <select id="s-close-action">
+          <option value="ask">每次询问（最小化 / 直接退出）</option>
+          <option value="minimize">直接最小化到托盘</option>
+          <option value="quit">直接退出</option>
+        </select>
+        <div class="desc">托盘图标右键 →「退出」永远可以直接退出。</div>
+      </div>
+
+      <div class="card">
+        <label>短信推送（预留）</label>
+        <div class="switch">
+          <input type="checkbox" id="s-sms-enabled">
+          <span class="desc">需接入第三方短信网关，阶段二</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>超话抓取（只取增量）</label>
+        <div class="desc">⚠️ 请用<b>小号</b>登录拿 cookie；低频、只取增量。风控无法完全避免，出问题只影响小号。</div>
+        <label>小号 Cookie</label>
+        <input type="password" id="s-weibo-cookie" placeholder="从 m.weibo.cn 任意请求的请求头复制 Cookie 整串">
+        <label>超话 containerid</label>
+        <input type="text" id="s-weibo-containerid" placeholder="超话页 XHR 里 getIndex?containerid=... 的完整值">
+        <div class="row">
+          <div>
+            <label>抓取间隔（分钟）</label>
+            <input type="number" id="s-fetch-interval" min="1">
+          </div>
+          <div>
+            <label>最多抓几页（安全上限）</label>
+            <input type="number" id="s-fetch-pages" min="1" max="100">
+          </div>
+        </div>
+        <div class="switch">
+          <input type="checkbox" id="s-fetch-enabled">
+          <span class="desc">开启定时自动抓取</span>
+        </div>
+        <div class="switch">
+          <input type="checkbox" id="s-fetch-autosum">
+          <span class="desc">抓完有新帖就自动总结成候选事件</span>
+        </div>
+        <div class="actions"><button onclick="saveFetchSettings()">保存抓取设置</button></div>
+        <div class="desc">抓取按钮在「推送」页顶部（抓取超话新帖）。</div>
+      </div>
+
+      <div class="actions"><button class="primary" onclick="saveAllSettings()">保存全部设置</button></div>
+      <div class="card">
+        <label>数据维护</label>
+        <div class="desc">清理只动日志和「已处理超过 30 天」的旧帖；<b>事件、术语、文案一律不动</b>。每天自动跑一次。</div>
+        <div class="actions">
+          <button onclick="cleanupNow()">立即清理</button>
+          <button onclick="exportData()">导出备份（JSON）</button>
+        </div>
+        <div class="desc" id="s-maint-status"></div>
+      </div>
+
+      <div class="card" style="margin-top:18px">
+        <div class="pagehead">
+          <label>运行日志</label>
+          <button class="tiny ghost" id="runs-toggle" onclick="toggleRuns()">展开全部 ▾</button>
+        </div>
+        <div class="list" id="s-runs"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<div class="modal-mask" id="close-modal" hidden>
+  <div class="modal">
+    <div class="modal-title">关闭窗口</div>
+    <div class="modal-body">
+      「最小化到托盘」——窗口收起，<b>定时抓取 / 推送继续跑</b>；<br>
+      「直接退出」——彻底关掉程序，后台也停。
+    </div>
+    <label class="switch" style="margin:12px 0">
+      <input type="checkbox" id="close-remember">
+      <span class="desc">记住我的选择（以后点 × 不再问，可在设置里改）</span>
+    </label>
+    <div class="actions">
+      <button class="primary" onclick="closeChoose('minimize')">最小化到托盘</button>
+      <button class="danger" onclick="closeChoose('quit')">直接退出</button>
+      <button class="ghost" onclick="closeCancel()">取消</button>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

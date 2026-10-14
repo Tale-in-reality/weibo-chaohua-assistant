@@ -1,0 +1,29 @@
+# ── 本地数据（⚠ 含微博登录 cookie，务必不要提交）──
+data/
+*.db
+*.sqlite3
+
+# ── 模型权重（很大；按 README 自行从 ModelScope 下载）──
+models/*.gguf
+models/*.bin
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# ── 日志 / 临时 ──
+*.log
+_*.txt
+
+# ── 设计工具中间产物 ──
+.impeccable/
+
+# ── 编辑器 / 系统 ──
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini

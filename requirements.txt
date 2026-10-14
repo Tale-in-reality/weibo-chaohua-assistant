@@ -1,0 +1,10 @@
+# 运行依赖（上限为「已知可用的大版本」，避免大版本破坏性升级）
+fastapi>=0.110,<1
+uvicorn>=0.27,<1
+pywebview>=5.0,<7
+apscheduler>=3.10,<4
+winotify>=1.1,<2
+pystray>=0.19,<1
+pillow>=10.0,<12
+httpx>=0.27,<1
+jieba>=0.42,<1
