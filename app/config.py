@@ -103,6 +103,7 @@ DEFAULT_SETTINGS = {
     "weibo_autosummarize": "1",       # 抓完有新帖就自动总结
     "ai_terms_enabled": "0",          # 总结时让 AI 顺带识别可能的术语（进术语词典待确认）
     "weibo_fetch_cooldown": "10",     # 每翻 20 页休息几秒（0 = 不额外休息）；抓取不设页数上限
+    "weibo_fetch_window_days": "7",   # 抓取窗口上限（天）：距上次抓取超过这么久就只补最近这些天；0 = 不限
     "weibo_max_fulltext": "40",       # 每次最多取几篇长文的全文（每篇多一次请求）
     "weibo_user_agent": "",           # 留空用内置移动端 UA
 

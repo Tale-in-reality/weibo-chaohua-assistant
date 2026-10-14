@@ -374,8 +374,20 @@ def _insert(items: list) -> int:
 
 # ---------- 抓取窗口 ----------
 
+def _window_days() -> int:
+    """抓取窗口上限（天）。0 = 不限。"""
+    try:
+        return max(0, int(db.get_setting("weibo_fetch_window_days", "7") or 7))
+    except (TypeError, ValueError):
+        return 7
+
+
 def _window_minutes() -> int:
-    """抓取窗口（分钟）：至少一个抓取间隔；距上次成功抓取更久则放大，免得停机期间漏帖。"""
+    """抓取窗口（分钟）：至少一个抓取间隔；距上次成功抓取更久则放大，免得停机期间漏帖。
+
+    上限由设置 `weibo_fetch_window_days` 决定（默认 7 天，**0 = 不限** ——
+    那种情况下真正的兜底是 SAFETY_MAX_PAGES，跑完会如实告知被兜底截断）。
+    """
     win = _int_setting("weibo_fetch_interval_min", 60)
     last = db.one("SELECT created_at FROM runs WHERE job='fetch' AND status='ok' "
                   "ORDER BY id DESC LIMIT 1")
@@ -386,7 +398,10 @@ def _window_minutes() -> int:
             win = max(win, int(gap) + 2)
         except Exception:
             pass
-    return min(win, 7 * 24 * 60)      # 上限一周，别无限翻
+    days = _window_days()
+    if days > 0:
+        win = min(win, days * 24 * 60)
+    return win
 
 
 # ---------- 主入口 ----------

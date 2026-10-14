@@ -1770,6 +1770,8 @@ async function loadSettings() {
   $('#s-fetch-interval').value = s.weibo_fetch_interval_min || 60;
   $('#s-fetch-cooldown').value = (s.weibo_fetch_cooldown !== undefined
     && s.weibo_fetch_cooldown !== '') ? s.weibo_fetch_cooldown : 10;
+  $('#s-fetch-window').value = (s.weibo_fetch_window_days !== undefined
+    && s.weibo_fetch_window_days !== '') ? s.weibo_fetch_window_days : 7;
   loadRuns();
   checkSetup(false);       // 刷新「环境检测」卡
 }
@@ -1806,6 +1808,7 @@ async function saveAllSettings() {
       weibo_autosummarize: $('#s-fetch-autosum').checked ? '1' : '0',
       weibo_fetch_interval_min: $('#s-fetch-interval').value,
       weibo_fetch_cooldown: $('#s-fetch-cooldown').value,
+      weibo_fetch_window_days: $('#s-fetch-window').value,
     },
   });
   toast('已保存全部设置');
@@ -1822,6 +1825,7 @@ function fetchSettingsBody() {
     weibo_autosummarize: $('#s-fetch-autosum').checked ? '1' : '0',
     weibo_fetch_interval_min: $('#s-fetch-interval').value,
     weibo_fetch_cooldown: $('#s-fetch-cooldown').value,
+    weibo_fetch_window_days: $('#s-fetch-window').value,
   };
 }
 
