@@ -539,7 +539,19 @@ def do_summarize():
 @app.post("/api/fetch/run")
 def fetch_run():
     """手动抓一次超话（含链式自动总结）。总是 200，真实结果在 ok 字段里。"""
-    return scheduler.run_fetch()
+    return scheduler.run_fetch(trigger="manual")
+
+
+@app.get("/api/fetch/status")
+def fetch_status():
+    """抓取进度 —— 自动（定时/开机补抓）与手动共用，前端轮询显示进度条。"""
+    return fetcher.fetch_status()
+
+
+@app.post("/api/fetch/stop")
+def fetch_stop():
+    """请求停止当前抓取（已入库的保留）。"""
+    return fetcher.stop_fetch()
 
 
 # ==================== 扫码登录（自动获取 cookie） ====================
@@ -780,6 +792,9 @@ def settings_set(payload: dict = Body(...)):
     if ("push_interval_min" in payload or "summarize_interval_min" in payload
             or "weibo_fetch_interval_min" in payload):
         scheduler.reload_jobs()
+    if str(payload.get("weibo_fetch_enabled", "")) == "1":
+        # 刚把定时抓取打开 → 别等一个间隔，立刻按空档补一次
+        scheduler.schedule_startup_catchup(delay_seconds=2)
     return {"ok": True, "settings": db.all_settings()}
 
 

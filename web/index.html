@@ -52,6 +52,16 @@
         <div class="actions" id="setup-actions"></div>
       </div>
 
+      <!-- 正在抓取（自动 / 手动都有，打开 app 的补抓也走这里） -->
+      <div class="card" id="dash-fetch" hidden>
+        <div class="pagehead">
+          <label id="dash-fetch-label">正在抓取超话新帖…</label>
+          <button class="tiny ghost" onclick="stopFetch()">停止</button>
+        </div>
+        <div class="bar"><i id="dash-fetch-bar" style="width:0%"></i></div>
+        <div class="desc" id="dash-fetch-text"></div>
+      </div>
+
       <div class="readout" id="dash-status"></div>
       <div class="card">
         <label>待办 Cue</label>
@@ -408,7 +418,7 @@
     <!-- ============ 推送 ============ -->
     <section id="page-push" class="page">
       <h2>推送</h2>
-      <p class="hint">桌面弹窗。有新事件时按设定间隔推送（只推上次之后新增的，不重复）。总结的数据源是下面粘贴的原始帖（阶段二会换成自动抓取）。</p>
+      <p class="hint">桌面弹窗。抓到新速览<b>会立刻推一次</b>，之后按设定间隔检查（只推没推过的，不重复）。打开 app 时若开着「定时抓取」，会按距上次抓取的空档<b>自动补抓</b>一次 —— 进度在下面和「概览」页都能看到。</p>
       <div class="card">
         <label>扫码登录微博（自动获取 cookie）</label>
         <div class="desc">⚠️ 用<b>小号</b>扫码。登录成功会自动把 cookie 存进「设置 · 超话抓取」，<b>长期有效，不用每次重扫</b>。</div>
@@ -438,6 +448,13 @@
           <button class="primary" id="p-fetch-btn" onclick="fetchNow()">抓取超话新帖</button>
           <button onclick="runJob('summarize')">立即总结未处理帖</button>
           <button onclick="runJob('push')">立即检查推送</button>
+        </div>
+        <div id="p-fetch-progress" hidden>
+          <div class="bar"><i id="p-fetch-bar" style="width:0%"></i></div>
+          <div class="desc" id="p-fetch-progress-text"></div>
+        </div>
+        <div class="actions" id="p-fetch-stop-wrap" hidden>
+          <button class="tiny ghost" onclick="stopFetch()">停止抓取</button>
         </div>
         <div class="desc" id="p-fetch-status"></div>
         <div class="desc" id="p-posts-count"></div>

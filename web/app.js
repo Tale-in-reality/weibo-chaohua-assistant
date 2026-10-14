@@ -111,6 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
   qrCheckLogin();
   refreshChaohua();
   checkSetup(true);        // 缺环境（没装 Ollama / 没拉模型）就自动弹首启向导
+  startFetchWatch();       // 打开后就盯一会儿 —— 定时/开机补抓一开始就能看到进度
   window.addEventListener('hashchange', () => {
     const [p, a] = (location.hash || '#dashboard').slice(1).split('/');
     if (p === 'events' && a) _focusEvent = Number(a) || null;
@@ -1493,6 +1494,7 @@ async function loadPush() {
   await loadPendingPosts();
   await qrCheckLogin();
   await refreshChaohua();
+  startFetchWatch(10);      // 进推送页也看一眼有没有正在跑的抓取
 }
 
 /* ---------------- 扫码登录 ---------------- */
@@ -1792,6 +1794,99 @@ async function saveFetchSettings() {
   toast('抓取设置已保存');
 }
 
+/* ---- 抓取进度（自动 / 手动共用一份状态）----
+   定时抓取和「打开 app 时的补抓」都在后台跑，所以这里持续轮询，
+   只要在跑就把进度显示出来 —— 打开 app 也能看见它在补抓。 */
+
+let _fetchTimer = null;         // 轮询定时器
+let _fetchWasRunning = false;   // 上一次轮询时是否在跑（用于识别「刚跑完」）
+let _fetchWatchUntil = 0;       // 打开后这段时间内保持轮询（捕获开机补抓）
+
+function fetchPhaseLabel(st) {
+  if (st.phase === 'summarize') return '抓取完成，正在总结为事件与速览…';
+  if (st.trigger === 'auto') return '正在自动抓取超话新帖…';
+  return '正在抓取超话新帖…';
+}
+
+function renderFetchProgress(st) {
+  const running = !!st.running;
+  const pct = Math.round((st.progress || 0) * 100);
+
+  const dash = $('#dash-fetch');
+  if (dash) {
+    dash.hidden = !running;
+    if (running) {
+      $('#dash-fetch-label').textContent = fetchPhaseLabel(st);
+      $('#dash-fetch-bar').style.width = pct + '%';
+      $('#dash-fetch-text').textContent = st.message || '';
+    }
+  }
+
+  const wrap = $('#p-fetch-progress');
+  if (wrap) {
+    wrap.hidden = !running;
+    if (running) {
+      $('#p-fetch-bar').style.width = pct + '%';
+      $('#p-fetch-progress-text').textContent = st.message || '';
+    }
+  }
+  const stopWrap = $('#p-fetch-stop-wrap');
+  if (stopWrap) stopWrap.hidden = !running;
+}
+
+function ensureFetchPolling() {
+  if (_fetchTimer) return;
+  _fetchTimer = setInterval(pollFetch, 1800);
+  pollFetch();
+}
+
+function stopFetchPolling() {
+  if (_fetchTimer) { clearInterval(_fetchTimer); _fetchTimer = null; }
+}
+
+function startFetchWatch(seconds = 150) {
+  // 打开 app 后的一段时间内保持轮询，才能看到「开机补抓」（它在启动约 8 秒后开跑）
+  _fetchWatchUntil = Date.now() + seconds * 1000;
+  ensureFetchPolling();
+}
+
+function refreshAfterFetch() {
+  try { loadDashboard(); } catch (e) { /* 不在概览页时忽略 */ }
+  try { loadPendingPosts(); } catch (e) { /* 忽略 */ }
+  try { loadPushLog(); } catch (e) { /* 忽略 */ }
+  try { loadRuns(); } catch (e) { /* 忽略 */ }
+}
+
+async function pollFetch() {
+  let st;
+  try { st = await api('/api/fetch/status'); } catch (e) { return; }
+  renderFetchProgress(st);
+
+  if (st.running) {
+    _fetchWasRunning = true;
+    _fetchWatchUntil = 0;                 // 已经在跑 → 之后按 running 决定是否继续
+    return;
+  }
+
+  if (_fetchWasRunning) {                 // 刚跑完，收尾
+    _fetchWasRunning = false;
+    const el = $('#p-fetch-status');
+    if (el) el.textContent = st.message || '';
+    if (st.error) toast('抓取失败：' + st.error);
+    else if (st.added) toast(`抓到 ${st.added} 条新帖`);
+    else toast('没有新帖');
+    refreshAfterFetch();
+  }
+  if (Date.now() > _fetchWatchUntil) stopFetchPolling();
+}
+
+async function stopFetch() {
+  try {
+    await api('/api/fetch/stop', { method: 'POST' });
+    toast('已请求停止，正在收尾…');
+  } catch (e) { toast(e.message); }
+}
+
 async function fetchNow() {
   const status = $('#p-fetch-status');
   const btn = $('#p-fetch-btn');
@@ -1799,25 +1894,21 @@ async function fetchNow() {
   btn.disabled = true;
   btn.textContent = '抓取中…';
   status.textContent = '抓取中…（若开着自动总结，会慢一点）';
+  _fetchWasRunning = true;      // 已知要跑，让轮询知道该做「跑完」的收尾
+  _fetchWatchUntil = 0;
+  ensureFetchPolling();
   try {
     await api('/api/settings', { method: 'POST', body: fetchSettingsBody() });  // 所见即所用
     const r = await api('/api/fetch/run', { method: 'POST' });
-    if (r.ok) {
-      let msg = r.message || `新增 ${r.added} 帖`;
-      if (r.added > 0) {
-        msg += '　→ 已总结：每帖一条事件 + 速览 1 条';
-        if (r.created) msg += `，AI 识别术语 ${r.created} 个`;
-      }
+    // 进度与收尾由 pollFetch 渲染；这里只在「根本没跑起来」时兜底
+    if (!r.ok) {
+      const msg = '抓取失败：' + (r.error || '未知原因');
       status.textContent = msg;
-      toast(r.added > 0 ? `抓到 ${r.added} 条新帖` : '没有新帖');
-    } else {
-      status.textContent = '抓取失败：' + (r.error || '未知原因');
-      toast('抓取失败：' + (r.error || '未知原因'));
+      _fetchWasRunning = false;
     }
-    loadRuns();
-    loadPendingPosts();
   } catch (e) {
     status.textContent = '抓取失败：' + e.message;
+    _fetchWasRunning = false;
   } finally {
     btn.disabled = false;
     btn.textContent = old;

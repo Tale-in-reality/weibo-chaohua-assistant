@@ -1,15 +1,18 @@
 """APScheduler 定时任务：抓取 + 推送 + 自动总结。频率读自 settings。"""
+from datetime import datetime, timedelta
+
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from . import db
 from .modules import fetcher, housekeeping, summarize
-from .notify import notify
+from .notify import last_error, notify
 
 _scheduler = None
 
 PUSH_JOB = "push_tick"
 SUM_JOB = "summarize_tick"
 FETCH_JOB = "fetch_tick"
+FETCH_STARTUP_JOB = "fetch_startup"     # 开机补抓（一次性）
 CLEAN_JOB = "cleanup_tick"
 
 
@@ -24,22 +27,39 @@ def _cleanup_tick():
         db.log_run("cleanup", "error", str(e))
 
 
-def run_fetch() -> dict:
-    """抓一次，必要时链式总结。手动端点与定时 tick 共用。不抛异常。"""
-    res = fetcher.fetch_new()
-    terms_n, events_n = 0, 0
-    if res.get("ok") and db.get_setting("weibo_autosummarize", "1") == "1":
-        # 有新增帖，或还有以前没处理完的帖 → 都值得总结一次
-        if res.get("added") or fetcher.count_pending():
-            try:
-                sr = summarize.summarize_pending()   # 内部自带 log_run
-                terms_n = sr.get("terms", 0)
-                events_n = sr.get("posts", 0)
-            except Exception as e:
-                db.log_run("summarize", "error", str(e))
-                res["summarize_error"] = str(e)
+def run_fetch(trigger: str = "manual") -> dict:
+    """抓一次，必要时链式总结，有新速览就顺手推一次。不抛异常。
+
+    trigger: manual（点按钮）/ auto（定时 / 开机补抓）——只影响进度显示。
+    """
+    res = fetcher.fetch_new(trigger=trigger, keep_open=True)
+    terms_n, events_n, digest_id = 0, 0, None
+    # 有新增帖，或还有以前没处理完的帖 → 都值得总结一次
+    if (res.get("ok") and db.get_setting("weibo_autosummarize", "1") == "1"
+            and (res.get("added") or fetcher.count_pending())):
+        fetcher.set_phase("summarize", "抓取完成，正在总结为事件与速览…")
+        try:
+            sr = summarize.summarize_pending()   # 内部自带 log_run
+            terms_n = sr.get("terms", 0)
+            events_n = sr.get("posts", 0)
+            digest_id = sr.get("digest_id")
+        except Exception as e:
+            db.log_run("summarize", "error", str(e))
+            res["summarize_error"] = str(e)
+        finally:
+            fetcher.finalize()
+    else:
+        fetcher.finalize()
     res["created"] = terms_n      # 前端显示「AI 识别术语 N 个」
     res["summarized"] = events_n  # 本次总结了几条帖
+    res["digest_id"] = digest_id
+
+    # 刚生成了新速览 → 立刻推一次，不等下一个推送间隔（用户点「抓取」就想马上有反馈）
+    if res.get("ok") and db.get_setting("push_enabled", "1") == "1":
+        try:
+            _push_tick()
+        except Exception as e:
+            db.log_run("push", "error", str(e))
     return res
 
 
@@ -49,22 +69,48 @@ def _fetch_tick():
         return
     if not fetcher.is_configured():
         return
-    res = run_fetch()
-    if not res.get("ok"):
+    res = run_fetch(trigger="auto")
+    if not res.get("ok") and res.get("error") != "已经在抓取中，等它跑完（或点「停止抓取」）":
         notify("超话抓取失败", res.get("error", "未知原因"))
+
+
+def schedule_startup_catchup(delay_seconds: int = 8) -> bool:
+    """开机补抓（一次性）：打开 app 后按「距上次成功抓取的空档」立刻补一次。
+
+    没有它的话，`interval` 任务要等满一个抓取间隔才第一次跑 —— 刚打开时
+    「什么都没发生」，看起来就像定时坏了。窗口本身由 fetcher._window_minutes()
+    按上次成功抓取的时间放大，所以中间漏掉的帖子会被一起抓回来。
+    """
+    if not _scheduler:
+        return False
+    if db.get_setting("weibo_fetch_enabled", "0") != "1":
+        return False
+    if not fetcher.is_configured():
+        return False
+    try:
+        _scheduler.add_job(_fetch_tick, "date",
+                           run_date=datetime.now() + timedelta(seconds=max(0, delay_seconds)),
+                           id=FETCH_STARTUP_JOB, replace_existing=True)
+        return True
+    except Exception:
+        return False
 
 
 def _push_tick():
     """只推「速览」事件（source='digest'）——每条帖子事件不推，免得刷屏。
-    点击弹窗跳到对应速览：launch 带 hash 的本地页面。"""
+
+    水位线用**已推送过的最大速览 id**（存 settings），而不是 push_log 的时间：
+    push_log 也会被「测试推送」「抓取失败」写入，拿它当分界会让一次失败/一次测试
+    把接下来的速览推送**静默吞掉**。用 id 就与这些无关。
+    """
     if db.get_setting("push_enabled", "1") != "1":
         return
-    last = db.one("SELECT created_at FROM push_log ORDER BY id DESC LIMIT 1")
-    if last:
-        rows = db.rows("SELECT * FROM events WHERE source='digest' AND created_at > ? "
-                       "ORDER BY id DESC", (last["created_at"],))
-    else:
-        rows = db.rows("SELECT * FROM events WHERE source='digest' ORDER BY id DESC LIMIT 3")
+    try:
+        mark = int(db.get_setting("last_pushed_digest_id", "0") or 0)
+    except (TypeError, ValueError):
+        mark = 0
+    rows = db.rows("SELECT * FROM events WHERE source='digest' AND id > ? ORDER BY id DESC",
+                   (mark,))
     if not rows:
         return
     e = rows[0]                                   # 推最新一条速览
@@ -73,8 +119,11 @@ def _push_tick():
         body += f"\n（另有 {len(rows) - 1} 条速览未读）"
     # 点击弹窗 → chaohua:// 协议 → 唤起 app 窗口并跳到这条速览（不开浏览器）
     launch = f"chaohua://events/{e['id']}"
-    notify(e["title"] or "超话速览", body, launch=launch)
-    db.log_run("push", "ok", f"推送速览 #{e['id']}（点击查看）")
+    ok = notify(e["title"] or "超话速览", body, launch=launch)
+    db.set_setting("last_pushed_digest_id", str(max(r["id"] for r in rows)))
+    db.log_run("push", "ok" if ok else "error",
+               f"推送速览 #{e['id']}（点击查看）" if ok
+               else f"推送速览 #{e['id']} 失败：{last_error()}")
 
 
 def _summarize_tick():
@@ -94,6 +143,7 @@ def start():
         _scheduler = BackgroundScheduler()
         _scheduler.start()
     reload_jobs()
+    schedule_startup_catchup(delay_seconds=8)   # 打开就补抓，别等满一个间隔
     return _scheduler
 
 
@@ -140,5 +190,5 @@ def trigger(job: str) -> dict:
     if job == "summarize":
         return summarize.summarize_pending()
     if job == "fetch":
-        return run_fetch()
+        return run_fetch(trigger="manual")
     return {"ok": False, "message": "未知任务"}

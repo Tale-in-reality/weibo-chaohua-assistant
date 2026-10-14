@@ -11,6 +11,8 @@
 """
 import html
 import re
+import threading
+import time
 from datetime import datetime, timedelta
 
 import httpx
@@ -63,6 +65,68 @@ def _int_setting(key: str, default: int) -> int:
 
 def is_configured() -> bool:
     return bool(_cookie()) and bool(_containerid())
+
+
+# ---------- 抓取进度（供前端轮询，自动/手动共用一份） ----------
+# 一次只允许一个抓取在跑（调度线程与手动按钮共用同一份状态，避免并发翻页）。
+
+JOB = {
+    "running": False, "done": False, "ok": None,
+    "phase": "",              # fetch | summarize | done
+    "trigger": "",            # auto（定时/开机补抓） | manual（点按钮）
+    "page": 1, "max_pages": 0, "fetched": 0, "added": 0, "noise": 0, "real": 0,
+    "window_min": 0, "start_date": "", "reached_date": "", "cutoff_date": "",
+    "progress": 0.0, "message": "", "error": "", "started": 0.0,
+}
+_LOCK = threading.Lock()
+_STOP = threading.Event()
+
+
+def fetch_status() -> dict:
+    with _LOCK:
+        return dict(JOB)
+
+
+def is_running() -> bool:
+    with _LOCK:
+        return bool(JOB["running"])
+
+
+def stop_fetch() -> dict:
+    """请求停止当前抓取（跑完当前这一页就收尾，已入库的保留）。"""
+    with _LOCK:
+        if not JOB["running"]:
+            return {"ok": False, "error": "当前没有在跑的抓取"}
+    _STOP.set()
+    return {"ok": True, "message": "已请求停止，正在收尾（已经入库的会保留）"}
+
+
+def _set(**kw):
+    with _LOCK:
+        JOB.update(kw)
+
+
+def set_phase(phase: str, message: str = ""):
+    """抓取完切到「总结中」阶段时用（保持 running，让前端进度条不断档）。"""
+    _set(running=True, done=False, phase=phase, message=message)
+
+
+def finalize():
+    _set(running=False, done=True, phase="done")
+
+
+def _pdate(dt) -> str:
+    return dt.strftime("%Y-%m-%d %H:%M") if dt else ""
+
+
+def _progress(start_pos, reached, cutoff) -> float:
+    """从「最新那条帖」往「窗口起点」走了多少（0~1）。"""
+    if start_pos is None or reached is None:
+        return 0.0
+    total = (start_pos - cutoff).total_seconds()
+    if total <= 0:
+        return 1.0
+    return max(0.0, min(1.0, (start_pos - reached).total_seconds() / total))
 
 
 def _sorted_cid() -> str:
@@ -298,11 +362,15 @@ def _window_minutes() -> int:
 
 # ---------- 主入口 ----------
 
-def fetch_new(cookie: str = "", containerid: str = "", max_pages=None) -> dict:
+def fetch_new(cookie: str = "", containerid: str = "", max_pages=None,
+              trigger: str = "manual", keep_open: bool = False) -> dict:
     """抓「最新」里、窗口内的帖子入库。返回 dict，**不抛异常**。
 
     成功：{ok, fetched, added, skipped, noise, window_min, truncated, message}
     失败：{ok:False, error, ...}   （软失败，绝不重试）
+
+    trigger: manual（点按钮）/ auto（定时或开机补抓）——只用于进度显示。
+    全程把进度写进模块级 JOB，供前端轮询；**一次只允许一个抓取在跑**。
     """
     if cookie:
         db.set_setting("weibo_cookie", cookie)
@@ -311,63 +379,102 @@ def fetch_new(cookie: str = "", containerid: str = "", max_pages=None) -> dict:
     if not is_configured():
         return {"ok": False, "error": "未配置 cookie 或 containerid"}
 
+    with _LOCK:
+        if JOB["running"]:
+            return {"ok": False, "error": "已经在抓取中，等它跑完（或点「停止抓取」）"}
+        JOB.update(running=True, done=False, ok=None, phase="fetch", trigger=trigger,
+                   page=1, fetched=0, added=0, noise=0, real=0, progress=0.0,
+                   message="开始抓取…", error="", started=time.time(),
+                   start_date="", reached_date="", cutoff_date="")
+    _STOP.clear()
+
     if max_pages is None:
         max_pages = _int_setting("weibo_max_pages", 20)
     window_min = _window_minutes()
-    cutoff = datetime.now() - timedelta(minutes=window_min)
+    now = datetime.now()
+    cutoff = now - timedelta(minutes=window_min)
+    _set(max_pages=max_pages, window_min=window_min,
+         start_date=_pdate(now), cutoff_date=_pdate(cutoff),
+         message=f"窗口 {window_min} 分钟：从最新往前翻…")
 
     max_fulltext = _int_setting("weibo_max_fulltext", 40)   # 每次最多取几篇长文全文
     fetched = added = noise = real_seen = longtxt = 0
-    stopped = "window"          # window | pages | empty
+    stopped = "window"          # window | pages | empty | stopped
     page = 1
+    start_pos = reached = None  # 窗口内「最新那条」与「当前翻到最旧那条」的时间
     try:
-        while page <= max_pages:
-            data = _get_index(page)
-            items = _parse_cards(data)
-            if not items:
-                stopped = "empty"
-                break
-            fetched += len(items)
+        try:
+            while page <= max_pages:
+                if _STOP.is_set():
+                    stopped = "stopped"
+                    break
+                data = _get_index(page)
+                items = _parse_cards(data)
+                if not items:
+                    stopped = "empty"
+                    break
+                fetched += len(items)
 
-            reached_old = False
-            fresh = []
-            for it in items:
-                if it["dt"] is not None and it["dt"] < cutoff:
-                    reached_old = True        # 「最新」严格倒序：碰到旧帖就到头了
-                    continue
-                if it.get("long") and longtxt < max_fulltext:
-                    full = full_text(it["mid"])       # 长文取全文，别让正文停在「全文」
-                    if full:
-                        it["content"] = _clean(full)
-                        longtxt += 1
-                if _is_noise(it["content"]):  # 水贴：只几个字 / 无意义转发 → 丢
-                    noise += 1
-                    continue
-                real_seen += 1
-                fresh.append(it)
-            added += _insert(fresh)           # mid 唯一 → 自动去重
+                reached_old = False
+                fresh = []
+                for it in items:
+                    if it["dt"] is not None:
+                        if start_pos is None or it["dt"] > start_pos:
+                            start_pos = it["dt"]
+                        if reached is None or it["dt"] < reached:
+                            reached = it["dt"]
+                    if it["dt"] is not None and it["dt"] < cutoff:
+                        reached_old = True    # 「最新」严格倒序：碰到旧帖就到头了
+                        continue
+                    if it.get("long") and longtxt < max_fulltext:
+                        full = full_text(it["mid"])   # 长文取全文，别让正文停在「全文」
+                        if full:
+                            it["content"] = _clean(full)
+                            longtxt += 1
+                    if _is_noise(it["content"]):  # 水贴：只几个字 / 无意义转发 → 丢
+                        noise += 1
+                        continue
+                    real_seen += 1
+                    fresh.append(it)
+                added += _insert(fresh)           # mid 唯一 → 自动去重
 
-            if reached_old:
-                stopped = "window"
-                break
-            page += 1                          # 页间节奏由 pacing 统一控制
-        else:
-            stopped = "pages"                 # 到页数上限还没够到窗口起点
-    except FetchError as e:
-        if added:
-            db.log_run("fetch", "partial", f"部分成功（已入 {added} 帖）后失败：{e}")
-        return {"ok": False, "error": str(e), "fetched": fetched, "added": added}
+                _set(page=page, fetched=fetched, added=added, noise=noise, real=real_seen,
+                     reached_date=_pdate(reached),
+                     progress=_progress(start_pos, reached, cutoff),
+                     message=(f"翻到第 {page} 页 · 已到 {_pdate(reached) or '—'}"
+                              f"（目标 {_pdate(cutoff)}）· 新增 {added}"))
 
-    skipped = max(fetched - added - noise, 0)
-    msg = (f"窗口 {window_min} 分钟：翻 {page} 页取 {fetched} 条 → 真帖 {real_seen}，"
-           f"新增 {added}（去重跳过 {skipped}），忽略水贴 {noise}"
-           + (f"，展开长文 {longtxt} 篇" if longtxt else ""))
-    if stopped == "pages":
-        msg += f"（⚠ 到页数上限 {max_pages}，窗口内可能还有未取到的帖）"
-    db.log_run("fetch", "ok", msg)
-    return {"ok": True, "fetched": fetched, "added": added, "skipped": skipped,
-            "noise": noise, "real": real_seen, "pages": page, "stopped": stopped,
-            "window_min": window_min, "message": msg}
+                if reached_old:
+                    stopped = "window"
+                    break
+                page += 1                          # 页间节奏由 pacing 统一控制
+            else:
+                stopped = "pages"                 # 到页数上限还没够到窗口起点
+        except FetchError as e:
+            if added:
+                db.log_run("fetch", "partial", f"部分成功（已入 {added} 帖）后失败：{e}")
+            _set(ok=False, error=str(e), message=f"失败：{e}")
+            return {"ok": False, "error": str(e), "fetched": fetched, "added": added}
+
+        skipped = max(fetched - added - noise, 0)
+        msg = (f"窗口 {window_min} 分钟：翻 {page} 页取 {fetched} 条 → 真帖 {real_seen}，"
+               f"新增 {added}（去重跳过 {skipped}），忽略水贴 {noise}"
+               + (f"，展开长文 {longtxt} 篇" if longtxt else ""))
+        if stopped == "pages":
+            msg += f"（⚠ 到页数上限 {max_pages}，窗口内可能还有未取到的帖）"
+        elif stopped == "stopped":
+            msg += "（已手动停止，已入库的保留）"
+        db.log_run("fetch", "ok", msg)
+        _set(ok=True, page=page, fetched=fetched, added=added, noise=noise,
+             real=real_seen, progress=1.0, message=msg)
+        return {"ok": True, "fetched": fetched, "added": added, "skipped": skipped,
+                "noise": noise, "real": real_seen, "pages": page, "stopped": stopped,
+                "window_min": window_min, "message": msg}
+    finally:
+        # keep_open=True：调用方（run_fetch）后面还要接「总结」阶段，别在这里收尾，
+        # 否则前端会先看到 done 而停掉轮询，错过总结进度。
+        if not keep_open:
+            finalize()
 
 
 # ---------- 手动粘贴（保留） ----------
