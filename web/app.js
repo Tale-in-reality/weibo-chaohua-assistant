@@ -1530,12 +1530,13 @@ let _qrTimer = null;
 let _lastCands = [];                       // 最近一次搜索结果（靠下标取，避免转义问题）
 function qrStop() { if (_qrTimer) { clearInterval(_qrTimer); _qrTimer = null; } }
 
-async function qrCheckLogin() {
+async function qrCheckLogin(force) {
+  // force=true 时才真的去打微博（「刷新登录态」按钮）；平时走后端 10 分钟缓存
   const el = $('#q-login-status');
   el.className = 'wb-status';
   el.innerHTML = '<span class="led"></span><span class="who">检查登录态…</span>';
   try {
-    const r = await api('/api/weibo/login_status');
+    const r = await api('/api/weibo/login_status' + (force ? '?force=true' : ''));
     if (!r.has_cookie) {
       el.innerHTML = '<span class="led"></span><span class="who">未登录</span>'
         + '<span class="sub">点「扫码登录」获取 cookie</span>';
@@ -1560,19 +1561,26 @@ async function qrCheckLogin() {
 
 async function refreshChaohua() {
   const el = $('#q-current');
-  let cid = '';
-  try { cid = (await api('/api/settings')).weibo_containerid || ''; } catch (e) { /* ignore */ }
+  let cid = '', cached = '';
+  try {
+    const s = await api('/api/settings');
+    cid = s.weibo_containerid || '';
+    cached = s.weibo_container_name || '';
+  } catch (e) { /* ignore */ }
   if (!cid) {
     el.className = 'wb-status';
     el.innerHTML = '<span class="led"></span><span class="who">未选超话</span>'
       + '<span class="sub">下面搜一个，或到「设置 · 超话抓取」手填</span>';
     return;
   }
-  let name = '';
-  try {
-    const r = await api('/api/weibo/resolve_chaohua', { method: 'POST', body: { containerid: cid } });
-    if (r.ok) name = r.name;
-  } catch (e) { /* ignore */ }
+  // 名字已经缓存过就用缓存 —— 别每次开 app 都去打一次微博反查
+  let name = cached;
+  if (!name) {
+    try {
+      const r = await api('/api/weibo/resolve_chaohua', { method: 'POST', body: { containerid: cid } });
+      if (r.ok) name = r.name;
+    } catch (e) { /* ignore */ }
+  }
   el.className = 'wb-status on';
   el.innerHTML = '<span class="led"></span>'
     + '<span class="who">' + esc(name || cid) + '</span>'

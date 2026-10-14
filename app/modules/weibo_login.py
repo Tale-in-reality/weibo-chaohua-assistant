@@ -90,6 +90,7 @@ def _has_sub(client: httpx.Client, domain_hint: str) -> bool:
 
 def _m_weibo_config(cookie: str) -> dict:
     """用 cookie 问 m.weibo.cn/api/config，拿登录态数据（login/uid…）。"""
+    pacing.pace()                      # 开机 / 切「推送」页都会走到这里，必须节流
     try:
         r = httpx.get("https://m.weibo.cn/api/config",
                       headers=_mobile_headers(cookie), timeout=15, follow_redirects=True)
@@ -106,6 +107,7 @@ def _screen_name(cookie: str, uid: str) -> str:
     """拿登录账号的昵称（比 uid 直观）。"""
     if not uid:
         return ""
+    pacing.pace()
     try:
         r = httpx.get(SEARCH_API, params={"type": "uid", "value": uid},
                       headers=_mobile_headers(cookie), timeout=15, follow_redirects=True)
@@ -115,18 +117,38 @@ def _screen_name(cookie: str, uid: str) -> str:
         return ""
 
 
-def login_status() -> dict:
-    """当前保存的 cookie 还有没有效。给前端显示「登录态」用。"""
+# 登录态结果缓存：前端在「开机」和「切到推送页」时都会问一次，
+# 不缓存就变成「反复开 app 反复打微博」——这是风控隐患。缓存按 cookie 值区分，
+# cookie 一变（重新登录 / 清除）缓存自动失效。
+_STATUS_CACHE = {"key": None, "at": 0.0, "val": None}
+STATUS_TTL = 600        # 10 分钟
+
+
+def login_status(force: bool = False) -> dict:
+    """当前保存的 cookie 还有没有效。给前端显示「登录态」用。
+
+    结果缓存 10 分钟（force=True 可强制刷新，给「刷新登录态」按钮用）。
+    """
     cookie = db.get_setting("weibo_cookie", "")
+    c = _STATUS_CACHE
+    now = time.monotonic()
+    if (not force and c["val"] is not None and c["key"] == cookie
+            and (now - c["at"]) < STATUS_TTL):
+        return c["val"]
+
     if not cookie:
-        return {"ok": True, "has_cookie": False, "valid": False,
-                "message": "未登录，请扫码"}
-    cfg = _m_weibo_config(cookie)
-    valid = bool(cfg.get("login"))
-    uid = str(cfg.get("uid") or "")
-    return {"ok": True, "has_cookie": True, "valid": valid, "uid": uid,
-            "screen_name": _screen_name(cookie, uid) if valid else "",
-            "message": "登录态：有效" if valid else "登录态：已过期，请重新扫码"}
+        out = {"ok": True, "has_cookie": False, "valid": False,
+               "message": "未登录，请扫码"}
+    else:
+        cfg = _m_weibo_config(cookie)
+        valid = bool(cfg.get("login"))
+        uid = str(cfg.get("uid") or "")
+        out = {"ok": True, "has_cookie": True, "valid": valid, "uid": uid,
+               "screen_name": _screen_name(cookie, uid) if valid else "",
+               "message": "登录态：有效" if valid else "登录态：已过期，请重新扫码"}
+
+    _STATUS_CACHE.update(key=cookie, at=now, val=out)
+    return out
 
 
 def resolve_chaohua(containerid: str) -> dict:
@@ -135,6 +157,7 @@ def resolve_chaohua(containerid: str) -> dict:
     if not cid:
         return {"ok": False, "name": "", "error": "containerid 为空"}
     cookie = db.get_setting("weibo_cookie", "")
+    pacing.pace()                      # 开机时前端会调它反查超话名，必须节流
     try:
         r = httpx.get(SEARCH_API, params={"containerid": cid},
                       headers=_mobile_headers(cookie), timeout=15, follow_redirects=True)
@@ -213,6 +236,7 @@ def poll() -> dict:
         db.set_setting("weibo_cookie", cookie)
         # 当场验证 m.weibo.cn 是否认可（否则等去搜索才发现 login:false 更绕）
         try:
+            pacing.pace()
             httpx.get("https://m.weibo.cn/", headers=_mobile_headers(cookie), timeout=15)
         except Exception:
             pass

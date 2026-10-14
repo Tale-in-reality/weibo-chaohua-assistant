@@ -569,9 +569,13 @@ def weibo_qr_poll():
 
 
 @app.get("/api/weibo/login_status")
-def weibo_login_status():
-    """当前保存的 cookie 是否仍有效（登录态 + 昵称）。总是 200。"""
-    return weibo_login.login_status()
+def weibo_login_status(force: bool = False):
+    """当前保存的 cookie 是否仍有效（登录态 + 昵称）。总是 200。
+
+    结果在 weibo_login 里缓存 10 分钟 —— 前端开机、切「推送」页都会问一次，
+    不缓存就会反复打微博。`force=true` 强制刷新（「刷新登录态」按钮用）。
+    """
+    return weibo_login.login_status(force=force)
 
 
 class UserQueryReq(BaseModel):

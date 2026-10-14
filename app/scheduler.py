@@ -1,4 +1,5 @@
 """APScheduler 定时任务：抓取 + 推送 + 自动总结。频率读自 settings。"""
+import random
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -74,12 +75,50 @@ def _fetch_tick():
         notify("超话抓取失败", res.get("error", "未知原因"))
 
 
-def schedule_startup_catchup(delay_seconds: int = 8) -> bool:
-    """开机补抓（一次性）：打开 app 后按「距上次成功抓取的空档」立刻补一次。
+def _minutes_since(sql: str) -> float | None:
+    """某条查询命中的最近时间距现在多少分钟。查不到 / 解析不了 → None。"""
+    row = db.one(sql)
+    if not row or not row["created_at"]:
+        return None
+    try:
+        dt = datetime.strptime(row["created_at"], "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+    return (datetime.now() - dt).total_seconds() / 60
+
+
+def fetch_due() -> bool:
+    """现在「该抓了吗」—— 开机补抓与「一键开启」都用它把门。
+
+    为什么要这道门：用户反复开关 app 时，每次启动都补抓会让同一段时间的帖子被
+    重复拉取（mid 去重只防重复入库，**防不住重复请求**）→ 平白增加风控风险。
+    所以只在真的「欠着一次抓取」时才补：
+      · 距上次**成功**抓取 ≥ 抓取间隔（没到点就交给定时任务）
+      · 且最近 3 分钟内**没试过**（含失败，避免失败后连打）
+    """
+    interval = _int_setting("weibo_fetch_interval_min", 60)
+    since_ok = _minutes_since(
+        "SELECT created_at FROM runs WHERE job='fetch' AND status='ok' "
+        "ORDER BY id DESC LIMIT 1")
+    if since_ok is not None and since_ok < interval:
+        return False
+    since_any = _minutes_since(
+        "SELECT created_at FROM runs WHERE job='fetch' ORDER BY id DESC LIMIT 1")
+    if since_any is not None and since_any < 3:
+        return False
+    return True
+
+
+def schedule_startup_catchup(delay_seconds: int | None = None) -> bool:
+    """开机补抓（一次性）：打开 app 后按「距上次成功抓取的空档」补一次。
 
     没有它的话，`interval` 任务要等满一个抓取间隔才第一次跑 —— 刚打开时
     「什么都没发生」，看起来就像定时坏了。窗口本身由 fetcher._window_minutes()
     按上次成功抓取的时间放大，所以中间漏掉的帖子会被一起抓回来。
+
+    ⚠️ 每次启动都补抓会让同一段时间的帖子被重复请求（去重只在入库层），
+    所以先用 `fetch_due()` 把门；延时也带随机抖动（默认 8~20s），
+    不形成「启动后固定第 8 秒发请求」的节律。
     """
     if not _scheduler:
         return False
@@ -87,6 +126,10 @@ def schedule_startup_catchup(delay_seconds: int = 8) -> bool:
         return False
     if not fetcher.is_configured():
         return False
+    if not fetch_due():
+        return False
+    if delay_seconds is None:
+        delay_seconds = random.randint(8, 20)
     try:
         _scheduler.add_job(_fetch_tick, "date",
                            run_date=datetime.now() + timedelta(seconds=max(0, delay_seconds)),
@@ -143,7 +186,7 @@ def start():
         _scheduler = BackgroundScheduler()
         _scheduler.start()
     reload_jobs()
-    schedule_startup_catchup(delay_seconds=8)   # 打开就补抓，别等满一个间隔
+    schedule_startup_catchup()      # 打开就补抓（延时带抖动），别等满一个间隔
     return _scheduler
 
 
