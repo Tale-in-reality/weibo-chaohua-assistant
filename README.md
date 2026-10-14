@@ -72,7 +72,9 @@
 
 ### 方式 A：用打包好的 app.exe（推荐给不想装环境的人）
 
-拿到 `app` 文件夹后，直接双击 **`app.exe`**。里面已经带了 Python 和全部依赖。
+到 [**Releases**](https://github.com/Tale-in-reality/weibo-chaohua-assistant/releases) 下载
+`weibo-chaohua-assistant-*-win64.zip`，**整个解开**（`app.exe` 依赖同级的 `_internal` 目录，
+别只单独拖出 exe），双击里面的 **`app.exe`**。包里已经带了 Python 和全部依赖。
 
 - **首次打开**会自动检测环境：没装 Ollama / 没拉模型，会弹出**环境向导**，点「一键下载并安装」即可（国内网络可切镜像源）。
 - `data/` 会生成在 `app.exe` 同目录（便携；拷走整个文件夹，数据也跟着走）。
