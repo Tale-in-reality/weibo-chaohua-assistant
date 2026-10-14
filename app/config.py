@@ -47,7 +47,7 @@ PORT = DEFAULT_PORT                    # 运行时可变；跨进程读 PORT_FIL
 PORT_FILE = DATA_DIR / "port"          # toast_click.py（独立进程）靠它拿到当前端口
 
 APP_NAME = "微博超话助手"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def set_port(port: int) -> int:
